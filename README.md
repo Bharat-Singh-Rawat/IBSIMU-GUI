@@ -1,3 +1,5 @@
+
+<img width="1848" height="1044" alt="Screenshot from 2026-04-14 22-20-09" src="https://github.com/user-attachments/assets/8c7253a5-390f-4014-aae2-9bdcbce22bad" />
 # IBSIMU-GUI
 
 Interactive GUI for axisymmetric ion beam extraction simulation using [IBSimu](http://ibsimu.sourceforge.net/) (Ion Beam Simulator).
