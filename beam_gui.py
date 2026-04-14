@@ -557,7 +557,7 @@ class BeamExtractionGUI:
 
         # Clear scan plot
         self.scan_ax.clear()
-        self.scan_ax.set_xlabel("Perveance (\u00b5A / V\u00b3\u02f2\u00b2)")
+        self.scan_ax.set_xlabel("Perveance ($\mu$A / V$^{3/2}$)")
         self.scan_ax.set_ylabel("RMS Divergence (mrad)")
         self.scan_ax.set_title("Perveance Scan")
         self.scan_ax.grid(True, alpha=0.3)
@@ -610,9 +610,9 @@ class BeamExtractionGUI:
             else:
                 continue
 
-            # Perveance: P = I / V^(3/2), in microperv
+            # Perveance: P = |I| / |V|^(3/2), in microperv
             if v_volts > 0:
-                perv = (curr / (v_volts ** 1.5)) * 1e6
+                perv = (abs(curr) / (v_volts ** 1.5)) * 1e6
             else:
                 continue
 
@@ -648,7 +648,7 @@ class BeamExtractionGUI:
                                   textcoords="offset points", xytext=(6, 6),
                                   fontsize=7, color="gray")
 
-        self.scan_ax.set_xlabel("Perveance (\u00b5A / V\u00b3\u02f2\u00b2)")
+        self.scan_ax.set_xlabel("Perveance ($\mu$A / V$^{3/2}$)")
         self.scan_ax.set_ylabel("RMS Divergence (mrad)")
         scan_type = "Voltage" if self.scan_is_vscan else "Current density"
         self.scan_ax.set_title(f"Perveance vs Divergence ({scan_type} scan)")
