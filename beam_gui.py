@@ -203,20 +203,24 @@ class BeamExtractionGUI:
         ttk.Label(sf2, text="(for V-scan)", foreground="gray").pack(side=tk.LEFT, padx=4)
 
         self.scan_params = {}
-        for lbl, key, dflt in [
-            ("Min value", "min", "2.0"),
-            ("Max value", "max", "15.0"),
-            ("Steps", "steps", "8"),
+        self.scan_labels = {}
+        for lbl, key, dflt, unit in [
+            ("Min", "min", "2.0", "kV"),
+            ("Max", "max", "15.0", "kV"),
+            ("Steps", "steps", "8", ""),
         ]:
             f = ttk.Frame(left); f.pack(fill=tk.X, padx=12, pady=2)
-            ttk.Label(f, text=lbl, width=12, anchor="w").pack(side=tk.LEFT)
+            ttk.Label(f, text=lbl, width=6, anchor="w").pack(side=tk.LEFT)
             v = tk.StringVar(value=dflt)
             ttk.Entry(f, textvariable=v, width=10).pack(side=tk.LEFT)
             self.scan_params[key] = v
+            if unit:
+                ulbl = ttk.Label(f, text=unit, width=8, foreground="gray")
+                ulbl.pack(side=tk.LEFT, padx=4)
+                self.scan_labels[key] = ulbl
 
-        ttk.Label(left, text="V-scan: min/max in kV (absolute)\n"
-                  "J-scan: min/max in A/m\u00b2",
-                  foreground="gray", font=("Helvetica", 8)).pack(padx=12)
+        # Update units when scan type changes
+        self.scan_type.trace_add("write", self._on_scan_type_changed)
 
         sbf = ttk.Frame(left); sbf.pack(fill=tk.X, padx=12, pady=4)
         self.scan_btn = ttk.Button(sbf, text="Run Scan",
@@ -326,6 +330,12 @@ class BeamExtractionGUI:
         else:
             self.mass_entry.config(state="normal")
             self.charge_entry.config(state="normal")
+
+    def _on_scan_type_changed(self, *_args):
+        is_v = self.scan_type.get() == "Voltage scan"
+        unit = "kV" if is_v else "A/m\u00b2"
+        self.scan_labels["min"].config(text=unit)
+        self.scan_labels["max"].config(text=unit)
 
     # ==================================================================
     # Electrode helpers
@@ -512,8 +522,10 @@ class BeamExtractionGUI:
 
         self.scan_running = True
         self.scan_stop = False
+        self.scan_is_vscan = is_vscan
         self.scan_data = {"perveance": [], "divergence": [],
-                          "voltage": [], "current": []}
+                          "voltage": [], "current": [],
+                          "scan_val": [], "scan_unit": "kV" if is_vscan else "A/m\u00b2"}
         self.run_btn.config(state="disabled")
         self.scan_btn.config(state="disabled")
         self.scan_stop_btn.config(state="normal")
@@ -545,22 +557,24 @@ class BeamExtractionGUI:
             if self.scan_stop:
                 break
 
-            self.root.after(0, lambda i=i, s=steps:
-                            self.scan_status.set(f"Scan {i+1}/{s}..."))
+            self.root.after(0, lambda i=i, s=steps, v=val:
+                            self.scan_status.set(
+                                f"Scan {i+1}/{s}  "
+                                f"({'V' if is_vscan else 'J'}={v:.2f})..."))
 
             if is_vscan:
-                # val is voltage in kV (absolute), apply as negative
                 v_kv = -abs(val)
                 ok = self._run_sim(voltage_override=(elec_idx, v_kv))
-                v_volts = abs(val) * 1e3  # in V for perveance calc
+                v_volts = abs(val) * 1e3
+                scan_label = f"{abs(val):.1f} kV"
             else:
                 ok = self._run_sim(current_override=str(val))
-                # For J-scan, use the existing electrode voltage
                 try:
                     v_kv = float(self.electrode_rows[1]["vars"]["volt"].get())
                 except (IndexError, ValueError):
                     v_kv = -8.0
                 v_volts = abs(v_kv) * 1e3
+                scan_label = f"{val:.0f} A/m\u00b2"
 
             if not ok:
                 break
@@ -572,9 +586,9 @@ class BeamExtractionGUI:
             else:
                 continue
 
-            # Perveance: P = I / V^(3/2), in microperv (uA/V^1.5)
+            # Perveance: P = I / V^(3/2), in microperv
             if v_volts > 0:
-                perv = (curr / (v_volts ** 1.5)) * 1e6  # micro-perv
+                perv = (curr / (v_volts ** 1.5)) * 1e6
             else:
                 continue
 
@@ -582,34 +596,44 @@ class BeamExtractionGUI:
             self.scan_data["divergence"].append(div)
             self.scan_data["voltage"].append(v_volts)
             self.scan_data["current"].append(curr)
+            self.scan_data["scan_val"].append(scan_label)
 
-            # Update scan plot in real-time
-            self.root.after(0, self._redraw_scan_plot)
+            # Update ALL plots in real-time after each scan point
+            self.root.after(0, self._update_all_scan_plots)
 
         self.root.after(0, self._scan_finished)
+
+    def _update_all_scan_plots(self):
+        """Refresh trajectory, phase space, envelope, and scan plot."""
+        self._update_trajectory_plot()
+        self._update_divergence_plot()
+        self._setup_slider()
+        self._on_slider(None)
+        self._redraw_scan_plot()
 
     def _redraw_scan_plot(self):
         self.scan_ax.clear()
         p = self.scan_data["perveance"]
         d = self.scan_data["divergence"]
+        labels = self.scan_data["scan_val"]
 
         self.scan_ax.plot(p, d, "o-", color="#1565C0", markersize=8, lw=2)
         for i in range(len(p)):
-            v_kv = self.scan_data["voltage"][i] / 1e3
-            self.scan_ax.annotate(f"{v_kv:.1f}kV", (p[i], d[i]),
+            self.scan_ax.annotate(labels[i], (p[i], d[i]),
                                   textcoords="offset points", xytext=(6, 6),
                                   fontsize=7, color="gray")
 
         self.scan_ax.set_xlabel("Perveance (\u00b5A / V\u00b3\u02f2\u00b2)")
         self.scan_ax.set_ylabel("RMS Divergence (mrad)")
-        self.scan_ax.set_title("Perveance vs Divergence")
+        scan_type = "Voltage" if self.scan_is_vscan else "Current density"
+        self.scan_ax.set_title(f"Perveance vs Divergence ({scan_type} scan)")
         self.scan_ax.grid(True, alpha=0.3)
 
         if len(d) > 1:
             imin = int(np.argmin(d))
             self.scan_ax.plot(p[imin], d[imin], "*", color="red",
                               markersize=15, zorder=5,
-                              label=f"Min div: {d[imin]:.2f} mrad")
+                              label=f"Min div: {d[imin]:.2f} mrad @ {labels[imin]}")
             self.scan_ax.legend(fontsize=9)
 
         self.scan_fig.tight_layout()
