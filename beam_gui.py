@@ -578,7 +578,13 @@ class BeamExtractionGUI:
                                 f"({'V' if is_vscan else 'J'}={v:.2f})..."))
 
             if is_vscan:
-                v_kv = -abs(val)
+                # Use sign from the electrode: negative for ions, positive for electrons
+                try:
+                    orig_v = float(self.electrode_rows[elec_idx - 1]["vars"]["volt"].get())
+                    sign = -1.0 if orig_v <= 0 else 1.0
+                except (IndexError, ValueError):
+                    sign = -1.0
+                v_kv = sign * abs(val)
                 ok = self._run_sim(voltage_override=(elec_idx, v_kv))
                 v_volts = abs(val) * 1e3
                 scan_label = f"{abs(val):.1f} kV"
