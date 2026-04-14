@@ -254,8 +254,13 @@ int main( int argc, char **argv )
 
     // ---- Solver ----
     EpotBiCGSTABSolver solver( geom );
-    InitialPlasma initp( AXIS_X, g_elec[0].thickness * 0.3 );
-    solver.set_initial_plasma( beam_energy, &initp );
+    bool is_electron = ( beam_charge < 0 );
+
+    // Plasma expansion model only valid for positive ions
+    if( !is_electron ) {
+        InitialPlasma initp( AXIS_X, g_elec[0].thickness * 0.3 );
+        solver.set_initial_plasma( beam_energy, &initp );
+    }
 
     EpotField       epot( geom );
     MeshScalarField scharge( geom );
@@ -278,7 +283,8 @@ int main( int argc, char **argv )
     int n_iter = 5;
     for( int it = 0; it < n_iter; it++ ) {
 
-        if( it == 1 ) {
+        // Plasma expansion model for ions only (not electrons)
+        if( it == 1 && !is_electron ) {
             double rhoe = pdb.get_rhosum();
             solver.set_pexp_plasma( -rhoe, beam_energy, beam_energy );
         }
