@@ -235,6 +235,20 @@ class BeamExtractionGUI:
         ttk.Label(left, textvariable=self.scan_status,
                   foreground="gray").pack(padx=12)
 
+        # --- Save / Export ---
+        ttk.Separator(left).pack(fill=tk.X, padx=12, pady=8)
+        ttk.Label(left, text="Save / Export",
+                  font=("Helvetica", 12, "bold")).pack(pady=(0, 4))
+        save_f1 = ttk.Frame(left); save_f1.pack(fill=tk.X, padx=12, pady=2)
+        ttk.Button(save_f1, text="Save All Plots (PNG)",
+                   command=self._on_save_plots).pack(fill=tk.X)
+        save_f2 = ttk.Frame(left); save_f2.pack(fill=tk.X, padx=12, pady=2)
+        ttk.Button(save_f2, text="Save Scan GIF",
+                   command=self._on_save_gif).pack(fill=tk.X)
+        self.save_status = tk.StringVar(value="")
+        ttk.Label(left, textvariable=self.save_status,
+                  foreground="gray", font=("Helvetica", 8)).pack(padx=12)
+
         # --- Beam Info ---
         ttk.Separator(left).pack(fill=tk.X, padx=12, pady=8)
         ttk.Label(left, text="Beam Info at Slider",
@@ -523,6 +537,7 @@ class BeamExtractionGUI:
         self.scan_running = True
         self.scan_stop = False
         self.scan_is_vscan = is_vscan
+        self.scan_frames = []  # PIL Images for GIF
         self.scan_data = {"perveance": [], "divergence": [],
                           "voltage": [], "current": [],
                           "scan_val": [], "scan_unit": "kV" if is_vscan else "A/m\u00b2"}
@@ -610,6 +625,7 @@ class BeamExtractionGUI:
         self._setup_slider()
         self._on_slider(None)
         self._redraw_scan_plot()
+        self._capture_scan_frame()
 
     def _redraw_scan_plot(self):
         self.scan_ax.clear()
@@ -650,6 +666,91 @@ class BeamExtractionGUI:
             self.scan_status.set(f"Scan done ({len(self.scan_data['perveance'])} pts)")
         # Also update the single-sim plots with the last run
         self.root.after(0, self._sim_done)
+
+    # ==================================================================
+    # Frame capture for GIF
+    # ==================================================================
+    def _capture_scan_frame(self):
+        """Capture a composite frame of trajectory + phase space + scan plot."""
+        try:
+            # Render each figure to a PIL image
+            imgs = []
+            for fig in [self.traj_fig, self.emit_fig, self.scan_fig]:
+                fig.canvas.draw()
+                buf = fig.canvas.buffer_rgba()
+                w, h = fig.canvas.get_width_height()
+                img = Image.frombuffer("RGBA", (w, h), buf).copy()
+                imgs.append(img)
+
+            # Stack: trajectory on top, phase space + scan side by side below
+            traj_img = imgs[0]
+            emit_img = imgs[1]
+            scan_img = imgs[2]
+
+            # Resize bottom row to same width as top
+            top_w = traj_img.width
+            bot_h = max(emit_img.height, scan_img.height)
+            half_w = top_w // 2
+            emit_r = emit_img.resize((half_w, bot_h), Image.LANCZOS)
+            scan_r = scan_img.resize((top_w - half_w, bot_h), Image.LANCZOS)
+
+            composite = Image.new("RGBA",
+                                  (top_w, traj_img.height + bot_h),
+                                  (255, 255, 255, 255))
+            composite.paste(traj_img, (0, 0))
+            composite.paste(emit_r, (0, traj_img.height))
+            composite.paste(scan_r, (half_w, traj_img.height))
+
+            self.scan_frames.append(composite.convert("RGB"))
+        except Exception:
+            pass  # skip frame on error
+
+    # ==================================================================
+    # Save plots and GIF
+    # ==================================================================
+    def _on_save_plots(self):
+        from tkinter import filedialog
+        folder = filedialog.askdirectory(title="Select folder to save plots")
+        if not folder:
+            return
+        try:
+            self.traj_fig.savefig(os.path.join(folder, "trajectory.png"),
+                                  dpi=150, bbox_inches="tight")
+            self.emit_fig.savefig(os.path.join(folder, "phase_space.png"),
+                                  dpi=150, bbox_inches="tight")
+            self.div_fig.savefig(os.path.join(folder, "envelope_divergence.png"),
+                                 dpi=150, bbox_inches="tight")
+            self.scan_fig.savefig(os.path.join(folder, "perveance_scan.png"),
+                                   dpi=150, bbox_inches="tight")
+            self.save_status.set(f"Saved 4 plots to {folder}")
+        except Exception as e:
+            messagebox.showerror("Save Error", str(e))
+
+    def _on_save_gif(self):
+        if not self.scan_frames:
+            messagebox.showinfo("No frames",
+                                "Run a perveance scan first to generate frames.")
+            return
+        from tkinter import filedialog
+        path = filedialog.asksaveasfilename(
+            title="Save scan animation",
+            defaultextension=".gif",
+            filetypes=[("GIF", "*.gif")])
+        if not path:
+            return
+        try:
+            self.save_status.set("Saving GIF...")
+            self.root.update_idletasks()
+            # duration per frame in ms; last frame lingers longer
+            durations = [800] * len(self.scan_frames)
+            durations[-1] = 2000
+            self.scan_frames[0].save(
+                path, save_all=True,
+                append_images=self.scan_frames[1:],
+                duration=durations, loop=0, optimize=True)
+            self.save_status.set(f"GIF saved: {os.path.basename(path)}")
+        except Exception as e:
+            messagebox.showerror("GIF Error", str(e))
 
     # ==================================================================
     # Load results
