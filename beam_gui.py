@@ -109,6 +109,48 @@ class BeamExtractionGUI:
             ttk.Entry(f, textvariable=v, width=10).pack(side=tk.RIGHT)
             self.general[key] = v
 
+        # --- Beam Species ---
+        ttk.Separator(left).pack(fill=tk.X, padx=12, pady=8)
+        ttk.Label(left, text="Beam Species",
+                  font=("Helvetica", 12, "bold")).pack(pady=(0, 4))
+
+        # Presets: name -> (mass_amu, charge_e)
+        self._species_presets = {
+            "e\u207b (electron)":       (0.000548579909, -1.0),
+            "H\u207a (proton)":         (1.00728, 1.0),
+            "H\u2082\u207a":            (2.01410, 1.0),
+            "H\u2083\u207a":            (3.02140, 1.0),
+            "D\u207a (deuteron)":       (2.01410, 1.0),
+            "He\u207a":                 (4.00260, 1.0),
+            "He\u00b2\u207a":           (4.00260, 2.0),
+            "N\u207a":                  (14.003, 1.0),
+            "O\u207a":                  (15.999, 1.0),
+            "Ar\u207a":                 (39.948, 1.0),
+            "Ar\u00b2\u207a":           (39.948, 2.0),
+            "Xe\u207a":                 (131.29, 1.0),
+            "Custom":                    (None, None),
+        }
+        sf = ttk.Frame(left); sf.pack(fill=tk.X, padx=12, pady=2)
+        ttk.Label(sf, text="Species:", width=10, anchor="w").pack(side=tk.LEFT)
+        self.species_var = tk.StringVar(value="H\u207a (proton)")
+        species_cb = ttk.Combobox(sf, textvariable=self.species_var, width=16,
+                                  values=list(self._species_presets.keys()),
+                                  state="readonly")
+        species_cb.pack(side=tk.LEFT)
+        species_cb.bind("<<ComboboxSelected>>", self._on_species_changed)
+
+        mf = ttk.Frame(left); mf.pack(fill=tk.X, padx=12, pady=2)
+        ttk.Label(mf, text="Mass (amu):", width=14, anchor="w").pack(side=tk.LEFT)
+        self.beam_mass_var = tk.StringVar(value="1.00728")
+        self.mass_entry = ttk.Entry(mf, textvariable=self.beam_mass_var, width=12)
+        self.mass_entry.pack(side=tk.LEFT)
+
+        cf = ttk.Frame(left); cf.pack(fill=tk.X, padx=12, pady=2)
+        ttk.Label(cf, text="Charge (e):", width=14, anchor="w").pack(side=tk.LEFT)
+        self.beam_charge_var = tk.StringVar(value="1.0")
+        self.charge_entry = ttk.Entry(cf, textvariable=self.beam_charge_var, width=12)
+        self.charge_entry.pack(side=tk.LEFT)
+
         # --- Electrodes ---
         ttk.Separator(left).pack(fill=tk.X, padx=12, pady=8)
         ttk.Label(left, text="Electrodes",
@@ -271,6 +313,21 @@ class BeamExtractionGUI:
             ax.set_title(title)
 
     # ==================================================================
+    # Species selection
+    # ==================================================================
+    def _on_species_changed(self, _event=None):
+        name = self.species_var.get()
+        preset = self._species_presets.get(name)
+        if preset and preset[0] is not None:
+            self.beam_mass_var.set(str(preset[0]))
+            self.beam_charge_var.set(str(preset[1]))
+            self.mass_entry.config(state="disabled")
+            self.charge_entry.config(state="disabled")
+        else:
+            self.mass_entry.config(state="normal")
+            self.charge_entry.config(state="normal")
+
+    # ==================================================================
     # Electrode helpers
     # ==================================================================
     def _add_electrode_row(self, dist="0.0", apt="1.0", volt="0.0",
@@ -310,6 +367,8 @@ class BeamExtractionGUI:
             f.write(f"particles={self.general['particles'].get()}\n")
             f.write(f"current_density={cur}\n")
             f.write(f"beam_energy={self.general['energy'].get()}\n")
+            f.write(f"beam_mass={self.beam_mass_var.get()}\n")
+            f.write(f"beam_charge={self.beam_charge_var.get()}\n")
             n = len(self.electrode_rows)
             f.write(f"electrodes={n}\n")
             for i, r in enumerate(self.electrode_rows):
@@ -688,7 +747,9 @@ class BeamExtractionGUI:
         curr = self.emittance_data["current_A"][idx]
 
         self.pos_var.set(f"x = {x_mm:.2f} mm")
+        species = self.species_var.get()
         self.info_var.set(
+            f"Species  : {species}\n"
             f"x = {x_mm:.3f} mm\n"
             f"eps(y,y')= {eps_mm:.4f} mm-mrad\n"
             f"alpha    = {alpha:.3f}\n"

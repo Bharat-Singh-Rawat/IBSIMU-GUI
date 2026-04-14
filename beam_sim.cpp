@@ -105,7 +105,8 @@ SolidFunc g_solid_funcs[MAX_ELECTRODES] = {
 // =========================================================================
 bool read_config( const string &filename,
                   int &grid_nx, int &n_particles,
-                  double &current_density, double &beam_energy )
+                  double &current_density, double &beam_energy,
+                  double &beam_mass, double &beam_charge )
 {
     ifstream ifs( filename.c_str() );
     if( !ifs.is_open() ) {
@@ -124,6 +125,8 @@ bool read_config( const string &filename,
         else if( line.find("particles=")      == 0 ) n_particles    = atoi( line.substr(10).c_str() );
         else if( line.find("current_density=")== 0 ) current_density= atof( line.substr(16).c_str() );
         else if( line.find("beam_energy=")    == 0 ) beam_energy    = atof( line.substr(12).c_str() );
+        else if( line.find("beam_mass=")      == 0 ) beam_mass      = atof( line.substr(10).c_str() );
+        else if( line.find("beam_charge=")    == 0 ) beam_charge    = atof( line.substr(12).c_str() );
         else if( line.find("electrodes=")     == 0 ) {
             n_expected = atoi( line.substr(11).c_str() );
             reading = true;
@@ -191,9 +194,12 @@ int main( int argc, char **argv )
     int    n_particles     = 5000;
     double current_density = 600.0;
     double beam_energy     = 5.0;
+    double beam_mass       = 1.0;    // amu (1 = proton)
+    double beam_charge     = 1.0;    // multiples of e (1 = singly charged)
 
     if( !read_config( config_file, grid_nx, n_particles,
-                      current_density, beam_energy ) ) {
+                      current_density, beam_energy,
+                      beam_mass, beam_charge ) ) {
         cerr << "Failed to read config file: " << config_file << endl;
         return 1;
     }
@@ -222,7 +228,9 @@ int main( int argc, char **argv )
              << "  V=" << g_elec[i].voltage*1e-3 << " kV"
              << "  chamfer=" << atan(g_elec[i].slope)*180.0/M_PI << " deg"
              << endl;
-    cerr << "Grid : " << grid_nx << " x " << grid_ny
+    cerr << "Beam   : m=" << beam_mass << " amu, q=" << beam_charge
+         << " e, E=" << beam_energy << " eV" << endl;
+    cerr << "Grid   : " << grid_nx << " x " << grid_ny
          << "  h=" << h*1e6 << " um" << endl;
     cerr << "Domain : " << x_max*1e3 << " x " << r_max*1e3 << " mm" << endl;
 
@@ -280,7 +288,7 @@ int main( int argc, char **argv )
 
         pdb.clear();
         pdb.add_2d_beam_with_energy( n_particles,
-                                     current_density, 1.0, 1.0,
+                                     current_density, beam_charge, beam_mass,
                                      beam_energy, 0.0, 2.0,
                                      0.0, 0.0,
                                      0.0, r_source );
