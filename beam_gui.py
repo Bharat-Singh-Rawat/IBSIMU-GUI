@@ -205,8 +205,8 @@ class BeamExtractionGUI:
         self.scan_params = {}
         self.scan_labels = {}
         for lbl, key, dflt, unit in [
-            ("Min", "min", "2.0", "kV"),
-            ("Max", "max", "15.0", "kV"),
+            ("Min", "min", "-2.0", "kV"),
+            ("Max", "max", "-15.0", "kV"),
             ("Steps", "steps", "8", ""),
         ]:
             f = ttk.Frame(left); f.pack(fill=tk.X, padx=12, pady=2)
@@ -350,6 +350,13 @@ class BeamExtractionGUI:
         unit = "kV" if is_v else "A/m\u00b2"
         self.scan_labels["min"].config(text=unit)
         self.scan_labels["max"].config(text=unit)
+        # Set sensible defaults with correct sign
+        if is_v:
+            self.scan_params["min"].set("-2.0")
+            self.scan_params["max"].set("-15.0")
+        else:
+            self.scan_params["min"].set("100")
+            self.scan_params["max"].set("1000")
 
     # ==================================================================
     # Electrode helpers
@@ -578,16 +585,12 @@ class BeamExtractionGUI:
                                 f"({'V' if is_vscan else 'J'}={v:.2f})..."))
 
             if is_vscan:
-                # Use sign from the electrode: negative for ions, positive for electrons
-                try:
-                    orig_v = float(self.electrode_rows[elec_idx - 1]["vars"]["volt"].get())
-                    sign = -1.0 if orig_v <= 0 else 1.0
-                except (IndexError, ValueError):
-                    sign = -1.0
-                v_kv = sign * abs(val)
+                # Use value directly as entered (user controls sign)
+                # e.g. -2 to -15 for ions, +2 to +15 for electrons
+                v_kv = val
                 ok = self._run_sim(voltage_override=(elec_idx, v_kv))
                 v_volts = abs(val) * 1e3
-                scan_label = f"{abs(val):.1f} kV"
+                scan_label = f"{val:+.1f} kV"
             else:
                 ok = self._run_sim(current_override=str(val))
                 try:
