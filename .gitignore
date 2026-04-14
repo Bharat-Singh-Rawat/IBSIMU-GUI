@@ -1,0 +1,23 @@
+# Build artifacts
+beam_sim
+*.o
+
+# Output data
+sim_output/
+*.png
+*.csv
+*.dat
+
+# Python
+__pycache__/
+*.pyc
+buildenv/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# IDE
+.vscode/
+.idea/
