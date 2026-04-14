@@ -547,7 +547,8 @@ class BeamExtractionGUI:
         self.scan_frames = []  # PIL Images for GIF
         self.scan_data = {"perveance": [], "divergence": [],
                           "voltage": [], "current": [],
-                          "scan_val": [], "scan_unit": "kV" if is_vscan else "A/m\u00b2"}
+                          "grid_ratio": [], "scan_val": [],
+                          "scan_unit": "kV" if is_vscan else "A/m\u00b2"}
         self.run_btn.config(state="disabled")
         self.scan_btn.config(state="disabled")
         self.scan_stop_btn.config(state="normal")
@@ -603,12 +604,14 @@ class BeamExtractionGUI:
             if not ok:
                 break
 
-            # Extract divergence at last sampling point
-            if self.emittance_data and len(self.emittance_data["divergence_mrad"]) > 0:
-                div = self.emittance_data["divergence_mrad"][-1]
-                curr = self.emittance_data["current_A"][-1]
-            else:
+            # Extract divergence at last electrode exit
+            if not self.emittance_data or not self.emittance_data.get("divergence_mrad"):
                 continue
+            x_exit = self._last_electrode_exit_mm()
+            idx_exit = self._idx_at_x(x_exit)
+            div = self.emittance_data["divergence_mrad"][idx_exit]
+            curr = self.emittance_data["current_A"][0]  # source current
+            grid_ratio = self._grid_current_ratio()
 
             # Perveance: P = |I| / |V|^(3/2), in microperv
             if v_volts > 0:
@@ -620,6 +623,7 @@ class BeamExtractionGUI:
             self.scan_data["divergence"].append(div)
             self.scan_data["voltage"].append(v_volts)
             self.scan_data["current"].append(curr)
+            self.scan_data["grid_ratio"].append(grid_ratio * 100)  # percent
             self.scan_data["scan_val"].append(scan_label)
 
             # Update ALL plots in real-time after each scan point
@@ -637,29 +641,50 @@ class BeamExtractionGUI:
         self._capture_scan_frame()
 
     def _redraw_scan_plot(self):
-        self.scan_ax.clear()
+        self.scan_fig.clear()
+        ax1 = self.scan_fig.add_subplot(111)
+        self.scan_ax = ax1
+
         p = self.scan_data["perveance"]
         d = self.scan_data["divergence"]
+        gr = self.scan_data["grid_ratio"]
         labels = self.scan_data["scan_val"]
 
-        self.scan_ax.plot(p, d, "o-", color="#1565C0", markersize=8, lw=2)
+        c1, c2 = "#1565C0", "#E65100"
+        ln1 = ax1.plot(p, d, "o-", color=c1, markersize=7, lw=2,
+                        label="Divergence")
+        ax1.set_xlabel("Perveance ($\\mu$A / V$^{3/2}$)")
+        ax1.set_ylabel("RMS Divergence (mrad)", color=c1)
+        ax1.tick_params(axis="y", labelcolor=c1)
+
+        # Grid current ratio on second y-axis
+        ax2 = ax1.twinx()
+        ln2 = ax2.plot(p, gr, "s--", color=c2, markersize=5, lw=1.5,
+                        label="Grid current %")
+        ax2.set_ylabel("Grid current / Total (%)", color=c2)
+        ax2.tick_params(axis="y", labelcolor=c2)
+        ax2.set_ylim(bottom=0)
+
+        # Annotations
         for i in range(len(p)):
-            self.scan_ax.annotate(labels[i], (p[i], d[i]),
-                                  textcoords="offset points", xytext=(6, 6),
-                                  fontsize=7, color="gray")
+            ax1.annotate(labels[i], (p[i], d[i]),
+                         textcoords="offset points", xytext=(6, 6),
+                         fontsize=7, color="gray")
 
-        self.scan_ax.set_xlabel("Perveance ($\mu$A / V$^{3/2}$)")
-        self.scan_ax.set_ylabel("RMS Divergence (mrad)")
         scan_type = "Voltage" if self.scan_is_vscan else "Current density"
-        self.scan_ax.set_title(f"Perveance vs Divergence ({scan_type} scan)")
-        self.scan_ax.grid(True, alpha=0.3)
+        ax1.set_title(f"Perveance Scan ({scan_type})")
+        ax1.grid(True, alpha=0.3)
 
+        # Min divergence marker
         if len(d) > 1:
             imin = int(np.argmin(d))
-            self.scan_ax.plot(p[imin], d[imin], "*", color="red",
-                              markersize=15, zorder=5,
-                              label=f"Min div: {d[imin]:.2f} mrad @ {labels[imin]}")
-            self.scan_ax.legend(fontsize=9)
+            ax1.plot(p[imin], d[imin], "*", color="red",
+                     markersize=15, zorder=5,
+                     label=f"Min div: {d[imin]:.2f} mrad @ {labels[imin]}")
+
+        lns = ln1 + ln2
+        ax1.legend(lns, [l.get_label() for l in lns],
+                   loc="upper left", fontsize=8)
 
         self.scan_fig.tight_layout()
         self.scan_canvas.draw()
@@ -762,6 +787,44 @@ class BeamExtractionGUI:
             messagebox.showerror("GIF Error", str(e))
 
     # ==================================================================
+    # Beam analysis helpers
+    # ==================================================================
+    def _last_electrode_exit_mm(self):
+        """X position of the last electrode's exit face (mm)."""
+        exits = []
+        for r in self.electrode_rows:
+            v = r["vars"]
+            dist = float(v["dist"].get())
+            apt = float(v["apt"].get())
+            thickness = max(2.0, 4.0 * apt)
+            exits.append(dist + thickness)
+        return max(exits)
+
+    def _idx_at_x(self, x_target):
+        """Index in emittance_data closest to x_target (mm)."""
+        x_list = self.emittance_data["x_mm"]
+        return min(range(len(x_list)), key=lambda i: abs(x_list[i] - x_target))
+
+    def _grid_current_ratio(self):
+        """Fraction of beam intercepted by grids (0=all transmitted, 1=all lost)."""
+        curr = self.emittance_data["current_A"]
+        if not curr:
+            return 0.0
+        i_source = abs(curr[0])  # current at first sample (just after source)
+        x_exit = self._last_electrode_exit_mm()
+        idx_exit = self._idx_at_x(x_exit)
+        i_exit = abs(curr[idx_exit])
+        if i_source > 0:
+            return 1.0 - i_exit / i_source
+        return 0.0
+
+    def _transmission_profile(self):
+        """Transmission fraction vs x (normalized to source current)."""
+        curr = np.array(self.emittance_data["current_A"])
+        i_source = abs(curr[0]) if abs(curr[0]) > 0 else 1.0
+        return np.abs(curr) / i_source * 100.0  # percent
+
+    # ==================================================================
     # Load results
     # ==================================================================
     def _load_results(self):
@@ -826,23 +889,34 @@ class BeamExtractionGUI:
         x = np.array(self.emittance_data["x_mm"])
         r_rms = np.array(self.emittance_data["r_rms_mm"])
         div = np.array(self.emittance_data["divergence_mrad"])
+        trans = self._transmission_profile()
 
-        c1, c2 = "#2196F3", "#FF5722"
+        c1, c2, c3 = "#2196F3", "#FF5722", "#4CAF50"
         self.div_ax.set_xlabel("x (mm)")
         self.div_ax.set_ylabel("RMS beam size (mm)", color=c1)
         ln1 = self.div_ax.plot(x, r_rms, color=c1, lw=2, label="r_rms")
         self.div_ax.tick_params(axis="y", labelcolor=c1)
 
         self._div_ax2 = self.div_ax.twinx()
-        self._div_ax2.set_ylabel("Divergence (mrad)", color=c2)
+        self._div_ax2.set_ylabel("Divergence (mrad) / Transmission (%)", color=c2)
         ln2 = self._div_ax2.plot(x, div, color=c2, lw=2, ls="--",
                                   label="Divergence")
+        ln3 = self._div_ax2.plot(x, trans, color=c3, lw=2, ls=":",
+                                  label="Transmission %")
         self._div_ax2.tick_params(axis="y", labelcolor=c2)
 
-        lns = ln1 + ln2
+        # Mark last electrode exit
+        try:
+            x_exit = self._last_electrode_exit_mm()
+            self.div_ax.axvline(x_exit, color="gray", lw=1, ls="-.",
+                                alpha=0.5, label=f"Exit @ {x_exit:.1f}mm")
+        except Exception:
+            pass
+
+        lns = ln1 + ln2 + ln3
         self.div_ax.legend(lns, [l.get_label() for l in lns],
-                           loc="upper right", fontsize=9)
-        self.div_ax.set_title("Beam Envelope & Divergence vs Position")
+                           loc="upper right", fontsize=8)
+        self.div_ax.set_title("Beam Envelope, Divergence & Transmission")
         self.div_ax.grid(True, alpha=0.3)
         self._div_vline = None
         self.div_fig.tight_layout()
@@ -882,6 +956,10 @@ class BeamExtractionGUI:
 
         self.pos_var.set(f"x = {x_mm:.2f} mm")
         species = self.species_var.get()
+        try:
+            grid_pct = self._grid_current_ratio() * 100
+        except Exception:
+            grid_pct = 0.0
         self.info_var.set(
             f"Species  : {species}\n"
             f"x = {x_mm:.3f} mm\n"
@@ -890,7 +968,9 @@ class BeamExtractionGUI:
             f"beta     = {beta_mm:.4f} mm/mrad\n"
             f"r_rms    = {r_rms:.4f} mm\n"
             f"div(rms) = {div_mrad:.3f} mrad\n"
-            f"current  = {curr:.4e} A"
+            f"current  = {curr:.4e} A\n"
+            f"grid I/I = {grid_pct:.1f}%\n"
+            f"transmit = {100-grid_pct:.1f}%"
         )
 
         # Phase-space scatter
