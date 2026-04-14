@@ -7,6 +7,12 @@
 
 Interactive GUI for axisymmetric ion beam extraction simulation using [IBSimu](http://ibsimu.sourceforge.net/) (Ion Beam Simulator).
 
+
+## An example of a perveance scan of a D+ beam between 2-300kV range.
+
+![Perveancescan_300_2kV_d+](https://github.com/user-attachments/assets/a99f80aa-bc2c-4cca-85ab-66468298a432)
+
+
 ## Features
 
 - **Multi-electrode geometry** - define any number of electrodes (up to 10) with individual position, aperture radius, voltage, and chamfer angle
