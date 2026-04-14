@@ -55,18 +55,31 @@ bool electrode_solid( double x, double y, double z )
     const ElectrodeConfig &e = g_elec[N];
     if( x < e.x_start || x > e.x_end ) return false;
     if( y < e.r_aperture ) return false;
-    double half = e.thickness * 0.5;
-    double x_mid = e.x_start + half;
-    if( N == 0 ) {
-        double x_wall_end = e.x_start + e.thickness * 0.25;
-        if( x < x_wall_end && y < e.r_wall ) return false;
-        if( x > x_mid ) {
-            double r_ch = e.r_aperture + e.slope * ( x - x_mid );
+
+    // Chamfer: slope > 0 means Pierce-type angled bore opening
+    // slope == 0 means rectangular (flat face, straight bore)
+    if( e.slope > 1e-6 ) {
+        double half = e.thickness * 0.5;
+        double x_mid = e.x_start + half;
+        if( N == 0 ) {
+            // First electrode: back-wall + downstream chamfer only
+            double x_wall_end = e.x_start + e.thickness * 0.25;
+            if( x < x_wall_end && y < e.r_wall ) return false;
+            if( x > x_mid ) {
+                double r_ch = e.r_aperture + e.slope * ( x - x_mid );
+                if( y < r_ch ) return false;
+            }
+        } else {
+            // Other electrodes: symmetric chamfer on both faces
+            double r_ch = e.r_aperture + e.slope * fabs( x - x_mid );
             if( y < r_ch ) return false;
         }
     } else {
-        double r_ch = e.r_aperture + e.slope * fabs( x - x_mid );
-        if( y < r_ch ) return false;
+        // Rectangular: first electrode still has back-wall
+        if( N == 0 ) {
+            double x_wall_end = e.x_start + e.thickness * 0.25;
+            if( x < x_wall_end && y < e.r_wall ) return false;
+        }
     }
     return true;
 }
@@ -140,17 +153,19 @@ bool read_config( const string &filename, SimConfig &cfg )
             reading = true;
         } else if( reading && g_num_electrodes < n_expected
                            && g_num_electrodes < MAX_ELECTRODES ) {
-            double pos_mm, r_mm, v_kV, chamfer_deg;
+            double pos_mm, r_mm, v_kV, thick_mm, chamfer_deg;
             istringstream iss( line );
-            if( !( iss >> pos_mm >> r_mm >> v_kV >> chamfer_deg ) ) continue;
+            // Format: position aperture voltage thickness chamfer
+            if( !( iss >> pos_mm >> r_mm >> v_kV >> thick_mm >> chamfer_deg ) ) continue;
             ElectrodeConfig &e = g_elec[g_num_electrodes];
             e.r_aperture = r_mm * 1e-3;
-            e.thickness  = max( 2.0e-3, 4.0 * e.r_aperture );
+            e.thickness  = thick_mm * 1e-3;
+            if( e.thickness < 0.5e-3 ) e.thickness = 0.5e-3;  // min 0.5 mm
             e.x_start    = pos_mm * 1e-3;
             e.x_end      = e.x_start + e.thickness;
-            if( chamfer_deg < 5.0 )  chamfer_deg = 5.0;
+            // Chamfer: 0 = rectangular (flat face), >0 = Pierce-type
             if( chamfer_deg > 85.0 ) chamfer_deg = 85.0;
-            e.slope   = tan( chamfer_deg * M_PI / 180.0 );
+            e.slope   = ( chamfer_deg > 0.5 ) ? tan( chamfer_deg * M_PI / 180.0 ) : 0.0;
             e.voltage = v_kV * 1e3;
             e.r_wall  = 3.0 * e.r_aperture;
             g_num_electrodes++;

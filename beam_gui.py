@@ -174,13 +174,13 @@ class BeamGUI:
         # --- Electrodes ---
         self._section(left, "Electrodes")
         hdr = ttk.Frame(left); hdr.pack(fill=tk.X, padx=12)
-        for t,w in [("#",3),("Dist",8),("Apt",7),("V(kV)",7),("Chm\u00b0",6)]:
+        for t,w in [("#",3),("Dist",7),("Apt",6),("V(kV)",6),("Thk",5),("Chm\u00b0",5)]:
             ttk.Label(hdr, text=t, width=w, anchor="center",
                       font=("Helvetica",9,"bold")).pack(side=tk.LEFT, padx=1)
         self.elec_frame = ttk.Frame(left); self.elec_frame.pack(fill=tk.X, padx=12)
         self.electrode_rows = []
-        self._add_elec("0.0","0.5","0.0","63.4")
-        self._add_elec("10.0","1.5","-8.0","45.0")
+        self._add_elec("0.0","0.5","0.0","2.0","0")
+        self._add_elec("10.0","1.5","-8.0","2.0","0")
         bf = ttk.Frame(left); bf.pack(fill=tk.X, padx=12, pady=4)
         ttk.Button(bf, text="+ Add", command=lambda: self._add_elec()).pack(side=tk.LEFT, padx=2)
         ttk.Button(bf, text="- Remove", command=self._rm_elec).pack(side=tk.LEFT, padx=2)
@@ -323,12 +323,13 @@ class BeamGUI:
         ttk.Entry(f, textvariable=v, width=10).pack(side=tk.RIGHT)
         store[key] = v
 
-    def _add_elec(self, dist="0.0", apt="1.0", volt="0.0", chamfer="45.0"):
+    def _add_elec(self, dist="0.0", apt="1.0", volt="0.0", thick="2.0", chamfer="0"):
         idx = len(self.electrode_rows)+1
         row = ttk.Frame(self.elec_frame); row.pack(fill=tk.X, pady=1)
         ttk.Label(row, text=str(idx), width=3, anchor="center").pack(side=tk.LEFT, padx=1)
         vs = {}
-        for k,d,w in [("dist",dist,8),("apt",apt,7),("volt",volt,7),("chamfer",chamfer,6)]:
+        for k,d,w in [("dist",dist,7),("apt",apt,6),("volt",volt,6),
+                       ("thick",thick,5),("chamfer",chamfer,5)]:
             v = tk.StringVar(value=d); ttk.Entry(row, textvariable=v, width=w).pack(side=tk.LEFT, padx=1)
             vs[k] = v
         self.electrode_rows.append({"frame":row, "vars":vs})
@@ -403,7 +404,7 @@ class BeamGUI:
             for i,r in enumerate(self.electrode_rows):
                 v = r["vars"]; volt = v["volt"].get()
                 if voltage_override and (i+1)==voltage_override[0]: volt = str(voltage_override[1])
-                f.write(f"{v['dist'].get()} {v['apt'].get()} {volt} {v['chamfer'].get()}\n")
+                f.write(f"{v['dist'].get()} {v['apt'].get()} {volt} {v['thick'].get()} {v['chamfer'].get()}\n")
 
     def _validate(self):
         try:
@@ -416,11 +417,13 @@ class BeamGUI:
         for i,r in enumerate(self.electrode_rows):
             v = r["vars"]
             try:
-                d,a,ch = float(v["dist"].get()), float(v["apt"].get()), float(v["chamfer"].get())
+                d = float(v["dist"].get()); a = float(v["apt"].get())
+                th = float(v["thick"].get()); ch = float(v["chamfer"].get())
             except: return f"Electrode #{i+1}: invalid numbers"
             if a <= 0: return f"Electrode #{i+1}: aperture > 0"
-            if ch < 5: return f"Electrode #{i+1}: chamfer >= 5"
-            t = max(2.0, 4.0*a); positions.append((d, d+t, i+1))
+            if th < 0.5: return f"Electrode #{i+1}: thickness >= 0.5 mm"
+            if ch < 0: return f"Electrode #{i+1}: chamfer >= 0"
+            positions.append((d, d+th, i+1))
         positions.sort()
         for j in range(len(positions)-1):
             if positions[j][1] > positions[j+1][0]:
@@ -473,8 +476,8 @@ class BeamGUI:
     def _last_elec_exit_mm(self):
         exits = []
         for r in self.electrode_rows:
-            v = r["vars"]; d = float(v["dist"].get()); a = float(v["apt"].get())
-            exits.append(d + max(2.0, 4.0*a))
+            v = r["vars"]
+            exits.append(float(v["dist"].get()) + float(v["thick"].get()))
         return max(exits)
 
     def _idx_at_x(self, xt):
