@@ -1,4 +1,7 @@
-# Ion Source Digital Twin
+# Ion Source Digital Twin (Under test phase)
+
+<img width="1920" height="1080" alt="Screenshot from 2026-04-15 00-43-18" src="https://github.com/user-attachments/assets/296c7579-3ac6-4447-8878-70dfae22f27e" />
+
 
 Unified simulation tool combining [IBSIMU](http://ibsimu.sourceforge.net/) beam extraction with [PY-BEMCS](https://github.com/Bharat-Singh-Rawat/PY-BEMCS) transport, CEX collisions, erosion, and thermal modeling.
 
