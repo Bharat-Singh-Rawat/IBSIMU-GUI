@@ -13,14 +13,17 @@ Interactive GUI for axisymmetric ion beam extraction simulation using [IBSimu](h
 - **Beam species selector** - choose from preset ions (H+, D+, He+, He2+, Ar+, Xe+, etc.), electrons, or define custom mass and charge state
 - **Axisymmetric (cylindrical) particle trajectory** simulation with space charge (Vlasov iteration)
 - **Phase-space plot** (y, y') with RMS emittance ellipse overlay, adjustable via slider along the beam axis
-- **Beam envelope and divergence** profile along the beam path
+- **Beam envelope, divergence & transmission** profile along the beam path with electrode exit marker
+- **Grid current analysis** - tracks beam current intercepted by electrodes vs. transmitted current, shown as transmission % profile and grid current ratio
 - **Perveance scan** - sweep voltage or current density and plot perveance vs. divergence in real time to find the optimal operating point
-  - Voltage scan: labels show kV, annotations show each voltage point
-  - Current scan: labels show A/m², annotations show each current density point
+  - Signed voltage values: negative for ions, positive for electrons
+  - Grid current ratio plotted alongside divergence on dual y-axis
   - All plots (trajectory, phase space, envelope) update live during the scan
+  - Divergence measured at the exit of the last electrode
 - **Export**
   - Save all plots as high-resolution PNG (trajectory, phase space, envelope, perveance scan)
   - Save animated GIF of the perveance scan showing beam evolution across the scan range
+- **Electron beam support** - correct handling of negative charge species (plasma model automatically disabled for electrons)
 - **Standalone packaging** - build as a distributable application with `build_package.sh`
 
 ## Prerequisites
@@ -79,7 +82,8 @@ python3 beam_gui.py
 2. Set electrode parameters (defaults: plasma electrode at 0 V, puller at -8 kV)
 3. Click **Run Simulation**
 4. Use the **slider** to explore the beam emittance at different axial positions
-5. Switch to the **Perveance Scan** tab to sweep voltage/current and find the optimal perveance
+5. Check the **Beam Info** panel for grid current ratio and transmission percentage
+6. Switch to the **Perveance Scan** tab to sweep voltage/current and find the optimal perveance
 
 ### Beam species
 
@@ -97,16 +101,34 @@ The **Beam Species** dropdown provides presets for common particles:
 | Xe+ | 131.3 | +1 |
 | Custom | user-defined | user-defined |
 
+### Electrode voltage conventions
+
+- **Positive ions** (H+, Ar+, etc.): extraction electrode at **negative** voltage (e.g. -8 kV)
+- **Electrons**: extraction electrode at **positive** voltage (e.g. +8 kV)
+- Voltage scan min/max uses signed values directly (e.g. -2 to -15 kV for ions, +2 to +15 kV for electrons)
+
 ### Perveance scan
 
 1. Select scan type: **Voltage scan** (vary extraction voltage) or **Current scan** (vary beam current density)
-2. Set the electrode number to scan, min/max range (units update automatically: kV or A/m²), and number of steps
-3. Click **Run Scan** - all plots update in real time as each point completes:
+2. Set the electrode number to scan, min/max range (units update automatically: kV or A/m2), and number of steps
+3. Enter **signed voltages**: negative for ion extraction, positive for electron extraction
+4. Click **Run Scan** - all plots update in real time as each point completes:
    - Trajectory plot shows the beam for the current scan point
    - Phase space and emittance update live
-   - Perveance vs. divergence curve builds up point by point
-4. The optimal operating point (minimum divergence) is marked with a red star
-5. Each data point is annotated with its voltage or current density value
+   - Perveance vs. divergence curve builds up point by point (blue circles, left axis)
+   - Grid current ratio tracks beam loss on electrodes (orange squares, right axis)
+5. The optimal operating point (minimum divergence) is marked with a red star
+6. Each data point is annotated with its voltage or current density value
+7. Divergence is measured at the **exit of the last electrode**
+
+### Grid current analysis
+
+The GUI tracks how much beam current is intercepted by the electrode grids:
+
+- **Envelope & Divergence plot**: green dotted line shows transmission % along the beam path, with a vertical marker at the last electrode exit
+- **Beam Info panel**: shows `grid I/I` (fraction intercepted) and `transmit` (fraction that passed through)
+- **Perveance scan plot**: orange curve shows grid current percentage vs. perveance on the right y-axis
+- Grid ratio = (source current - exit current) / source current
 
 ### Saving results
 
@@ -115,8 +137,8 @@ After running a simulation or scan:
 - **Save All Plots (PNG)**: saves 4 high-resolution plots to a folder:
   - `trajectory.png` - beam trajectory and geometry
   - `phase_space.png` - emittance phase space at the current slider position
-  - `envelope_divergence.png` - beam size and divergence profile
-  - `perveance_scan.png` - perveance vs. divergence curve
+  - `envelope_divergence.png` - beam size, divergence, and transmission profile
+  - `perveance_scan.png` - perveance vs. divergence and grid current curve
 
 - **Save Scan GIF**: after a perveance scan, exports an animated GIF showing the beam evolution across all scan points (trajectory + phase space + scan progress in each frame, 800 ms per frame)
 
@@ -152,9 +174,10 @@ Users run it with:
 ## How it works
 
 1. The GUI writes electrode and beam parameters to a config file
-2. `beam_sim` reads the config, builds the IBSIMU geometry, runs 5 Vlasov iterations with space-charge self-consistency using the specified particle species
+2. `beam_sim` reads the config, builds the IBSIMU geometry, runs 5 Vlasov iterations with space-charge self-consistency using the specified particle species (plasma expansion model for ions, pure space-charge iteration for electrons)
 3. Outputs: trajectory plot (PNG), emittance profile (CSV), phase-space scatter data (CSV)
 4. The GUI displays the results interactively with sliders and tabbed plots
+5. Grid current ratio is computed by comparing beam current at the source vs. at the last electrode exit
 
 ## License
 
