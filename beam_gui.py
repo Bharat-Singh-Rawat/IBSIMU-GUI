@@ -217,6 +217,19 @@ class BeamGUI:
                 self.scan_labels[k] = ul
         self.scan_type.trace_add("write", self._on_scan_type)
 
+        sf_den = ttk.Frame(left); sf_den.pack(fill=tk.X, padx=12, pady=2)
+        ttk.Label(sf_den, text="Density", width=6, anchor="w").pack(side=tk.LEFT)
+        self.scan_density = tk.StringVar(value=self.general["current"].get())
+        self.scan_density_entry = ttk.Entry(sf_den, textvariable=self.scan_density, width=10)
+        self.scan_density_entry.pack(side=tk.LEFT)
+        ttk.Label(sf_den, text="A/m\u00b2", width=8, foreground="gray").pack(side=tk.LEFT, padx=4)
+
+        sf_div = ttk.Frame(left); sf_div.pack(fill=tk.X, padx=12, pady=2)
+        ttk.Label(sf_div, text="Div. at", width=6, anchor="w").pack(side=tk.LEFT)
+        self.scan_div_offset = tk.StringVar(value="0.0")
+        ttk.Entry(sf_div, textvariable=self.scan_div_offset, width=10).pack(side=tk.LEFT)
+        ttk.Label(sf_div, text="mm past exit", width=10, foreground="gray").pack(side=tk.LEFT, padx=4)
+
         sbf = ttk.Frame(left); sbf.pack(fill=tk.X, padx=12, pady=4)
         self.scan_btn = ttk.Button(sbf, text="Run Scan", command=self._on_run_scan)
         self.scan_btn.pack(side=tk.LEFT, padx=2, fill=tk.X, expand=True)
@@ -363,8 +376,13 @@ class BeamGUI:
         is_v = self.scan_type.get() == "Voltage scan"
         u = "kV" if is_v else "A/m\u00b2"
         self.scan_labels["min"].config(text=u); self.scan_labels["max"].config(text=u)
-        if is_v: self.scan_params["min"].set("-2.0"); self.scan_params["max"].set("-15.0")
-        else: self.scan_params["min"].set("100"); self.scan_params["max"].set("1000")
+        if is_v:
+            self.scan_params["min"].set("-2.0"); self.scan_params["max"].set("-15.0")
+            self.scan_density_entry.config(state="normal")
+            self.scan_density.set(self.general["current"].get())
+        else:
+            self.scan_params["min"].set("100"); self.scan_params["max"].set("1000")
+            self.scan_density_entry.config(state="disabled")
 
     # ==================================================================
     # Config + validation
@@ -508,7 +526,11 @@ class BeamGUI:
                 m = xv==x; yh,yph = yv[m],ypv[m]
                 self.phase_space[x] = (np.concatenate([yh,-yh]), np.concatenate([yph,-yph]))
         tf = os.path.join(OUTPUT_DIR,"trajectory.png")
-        self.traj_image = Image.open(tf) if os.path.exists(tf) else None
+        if os.path.exists(tf):
+            img = Image.open(tf); img.load()
+            self.traj_image = img
+        else:
+            self.traj_image = None
         self.field_data = self._csv(os.path.join(OUTPUT_DIR,"field_along_axis.csv"))
         self.convergence_data = self._load_convergence()
         self.electrode_currents = self._csv(os.path.join(OUTPUT_DIR,"electrode_currents.csv"))
@@ -733,9 +755,12 @@ class BeamGUI:
         self.run_btn.config(state="disabled"); self.scan_btn.config(state="disabled")
         self.scan_stop_btn.config(state="normal")
         self.right_nb.select(3)  # Perveance Scan tab
-        threading.Thread(target=self._scan_thread, args=(smin,smax,steps,is_v), daemon=True).start()
+        scan_density = self.scan_density.get() if is_v else None
+        try: div_offset = float(self.scan_div_offset.get())
+        except: div_offset = 0.0
+        threading.Thread(target=self._scan_thread, args=(smin,smax,steps,is_v,scan_density,div_offset), daemon=True).start()
 
-    def _scan_thread(self, smin, smax, steps, is_v):
+    def _scan_thread(self, smin, smax, steps, is_v, scan_density, div_offset):
         vals = np.linspace(smin, smax, steps)
         eidx = int(self.scan_electrode.get()) if is_v else 0
         for i,val in enumerate(vals):
@@ -743,7 +768,7 @@ class BeamGUI:
             self.root.after(0, lambda i=i,s=steps,v=val:
                 self.scan_status.set(f"Scan {i+1}/{s} ({'V' if is_v else 'J'}={v:.2f})..."))
             if is_v:
-                ok = self._run_sim(voltage_override=(eidx, val))
+                ok = self._run_sim(voltage_override=(eidx, val), current_override=scan_density)
                 v_volts = abs(val)*1e3; label = f"{val:+.1f} kV"
             else:
                 ok = self._run_sim(current_override=str(val))
@@ -752,8 +777,8 @@ class BeamGUI:
                 v_volts = abs(vk)*1e3; label = f"{val:.0f} A/m\u00b2"
             if not ok: break
             if not self.emittance_data or not self.emittance_data.get("divergence_mrad"): continue
-            xe = self._last_elec_exit_mm(); ie = self._idx_at_x(xe)
-            div = self.emittance_data["divergence_mrad"][ie]
+            xe = self._last_elec_exit_mm() + div_offset; ie = self._idx_at_x(xe)
+            div = self.emittance_data["divergence_mrad"][ie] * 180.0 / (np.pi * 1000.0)
             cur = self.emittance_data["current_A"][0]
             gr = self._grid_ratio()
             if v_volts > 0:
@@ -778,7 +803,7 @@ class BeamGUI:
         c1,c2 = "#1565C0","#E65100"
         ln1 = ax1.plot(p,d,"o-",color=c1,markersize=7,lw=2,label="Divergence")
         ax1.set_xlabel("Perveance ($\\mu$A / V$^{3/2}$)")
-        ax1.set_ylabel("RMS Divergence (mrad)",color=c1); ax1.tick_params(axis="y",labelcolor=c1)
+        ax1.set_ylabel("RMS Divergence (\u00b0)",color=c1); ax1.tick_params(axis="y",labelcolor=c1)
         ax2 = ax1.twinx()
         ln2 = ax2.plot(p,gr,"s--",color=c2,markersize=5,lw=1.5,label="Grid I %")
         ax2.set_ylabel("Grid current (%)",color=c2); ax2.tick_params(axis="y",labelcolor=c2)
@@ -790,7 +815,7 @@ class BeamGUI:
         if len(d) > 1:
             im = int(np.argmin(d))
             ax1.plot(p[im],d[im],"*",color="red",markersize=15,zorder=5,
-                     label=f"Min: {d[im]:.2f}mrad @ {lb[im]}")
+                     label=f"Min: {d[im]:.2f}\u00b0 @ {lb[im]}")
         lns = ln1+ln2; ax1.legend(lns,[l.get_label() for l in lns],loc="upper left",fontsize=7)
         self.scan_fig.tight_layout(); self.scan_canvas.draw()
 

@@ -62,9 +62,7 @@ bool electrode_solid( double x, double y, double z )
         double half = e.thickness * 0.5;
         double x_mid = e.x_start + half;
         if( N == 0 ) {
-            // First electrode: back-wall + downstream chamfer only
-            double x_wall_end = e.x_start + e.thickness * 0.25;
-            if( x < x_wall_end && y < e.r_wall ) return false;
+            // First electrode: downstream chamfer only
             if( x > x_mid ) {
                 double r_ch = e.r_aperture + e.slope * ( x - x_mid );
                 if( y < r_ch ) return false;
@@ -73,12 +71,6 @@ bool electrode_solid( double x, double y, double z )
             // Other electrodes: symmetric chamfer on both faces
             double r_ch = e.r_aperture + e.slope * fabs( x - x_mid );
             if( y < r_ch ) return false;
-        }
-    } else {
-        // Rectangular: first electrode still has back-wall
-        if( N == 0 ) {
-            double x_wall_end = e.x_start + e.thickness * 0.25;
-            if( x < x_wall_end && y < e.r_wall ) return false;
         }
     }
     return true;
@@ -455,6 +447,32 @@ int main( int argc, char **argv )
                 << bf[0] << "\n";
         }
         ofs.close();
+    }
+
+    // ==================================================================
+    // OUTPUT 3b : exit-plane particle data (for beam handoff)
+    // ==================================================================
+    {
+        double x_exit = g_elec[g_num_electrodes-1].x_end;
+        double xp = min( x_exit + h, x_max - 2*h );
+        vector<trajectory_diagnostic_e> diags;
+        diags.push_back( DIAG_Y );
+        diags.push_back( DIAG_VX );
+        diags.push_back( DIAG_VY );
+        diags.push_back( DIAG_EK );
+        TrajectoryDiagnosticData tdata;
+        pdb.trajectories_at_plane( tdata, AXIS_X, xp, diags );
+
+        ofstream ofs( (outdir + "/exit_particles.csv").c_str() );
+        ofs << "y_m,vx_ms,vy_ms,vz_ms,ek_eV\n";
+        for( size_t j = 0; j < tdata.traj_size(); j++ ) {
+            ofs << scientific << setprecision(8)
+                << tdata(j,0) << "," << tdata(j,1) << ","
+                << tdata(j,2) << "," << 0.0 << ","
+                << tdata(j,3) << "\n";
+        }
+        ofs.close();
+        cerr << "Wrote exit_particles.csv (" << tdata.traj_size() << " particles)" << endl;
     }
 
     // ==================================================================
