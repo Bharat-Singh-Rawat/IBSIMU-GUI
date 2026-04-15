@@ -241,10 +241,61 @@ class BeamGUI:
         self.scan_status = tk.StringVar(value="")
         ttk.Label(left, textvariable=self.scan_status, foreground="gray").pack(padx=12)
 
+        # --- Matched Beam Finder ---
+        self._section(left, "Matched Beam Finder")
+        mf1 = ttk.Frame(left); mf1.pack(fill=tk.X, padx=12, pady=2)
+        ttk.Label(mf1, text="Elec #:", width=8, anchor="w").pack(side=tk.LEFT)
+        self.match_electrode = tk.StringVar(value="2")
+        ttk.Entry(mf1, textvariable=self.match_electrode, width=5).pack(side=tk.LEFT)
+        self.match_params = {}
+        for l,k,d,u in [("V min","match_vmin","-2.0","kV"),("V max","match_vmax","-15.0","kV"),
+                         ("Tol","match_tol","0.05","kV")]:
+            f = ttk.Frame(left); f.pack(fill=tk.X, padx=12, pady=2)
+            ttk.Label(f, text=l, width=6, anchor="w").pack(side=tk.LEFT)
+            v = tk.StringVar(value=d); ttk.Entry(f, textvariable=v, width=10).pack(side=tk.LEFT)
+            self.match_params[k] = v
+            ttk.Label(f, text=u, width=8, foreground="gray").pack(side=tk.LEFT, padx=4)
+        self.match_btn = ttk.Button(left, text="Find Matched Beam", command=self._on_match_find)
+        self.match_btn.pack(fill=tk.X, padx=12, pady=2)
+        self.match_status = tk.StringVar(value="")
+        ttk.Label(left, textvariable=self.match_status, foreground="gray", wraplength=300,
+                  font=("Helvetica",8)).pack(padx=12)
+
+        # --- Auto-Optimizer ---
+        self._section(left, "Auto-Optimizer")
+        ttk.Label(left, text="Minimize divergence by sweeping:", font=("Helvetica",8,"italic")).pack(padx=12, anchor="w")
+        self.opt_params = {}
+        for l,k,dmin,dmax in [("V (kV)","opt_v","-2.0","-15.0"),
+                               ("Gap (mm)","opt_gap","0.5","3.0"),
+                               ("Apt (mm)","opt_apt","0.3","2.0")]:
+            f = ttk.Frame(left); f.pack(fill=tk.X, padx=12, pady=1)
+            self.opt_params[k+"_on"] = tk.BooleanVar(value=(k=="opt_v"))
+            ttk.Checkbutton(f, text=l, variable=self.opt_params[k+"_on"], width=8).pack(side=tk.LEFT)
+            vmin = tk.StringVar(value=dmin); vmax = tk.StringVar(value=dmax)
+            ttk.Entry(f, textvariable=vmin, width=6).pack(side=tk.LEFT, padx=1)
+            ttk.Label(f, text="-", width=1).pack(side=tk.LEFT)
+            ttk.Entry(f, textvariable=vmax, width=6).pack(side=tk.LEFT, padx=1)
+            self.opt_params[k+"_min"] = vmin; self.opt_params[k+"_max"] = vmax
+        of1 = ttk.Frame(left); of1.pack(fill=tk.X, padx=12, pady=2)
+        ttk.Label(of1, text="Elec #:", width=6, anchor="w").pack(side=tk.LEFT)
+        self.opt_electrode = tk.StringVar(value="2")
+        ttk.Entry(of1, textvariable=self.opt_electrode, width=5).pack(side=tk.LEFT)
+        ttk.Label(of1, text="Steps:", width=6, anchor="w").pack(side=tk.LEFT, padx=(8,0))
+        self.opt_steps = tk.StringVar(value="5")
+        ttk.Entry(of1, textvariable=self.opt_steps, width=5).pack(side=tk.LEFT)
+        self.opt_btn = ttk.Button(left, text="Run Optimizer", command=self._on_run_optimizer)
+        self.opt_btn.pack(fill=tk.X, padx=12, pady=2)
+        self.opt_stop_btn = ttk.Button(left, text="Stop", command=lambda: setattr(self,'opt_stop',True), state="disabled")
+        self.opt_stop_btn.pack(fill=tk.X, padx=12, pady=1)
+        self.opt_status = tk.StringVar(value="")
+        ttk.Label(left, textvariable=self.opt_status, foreground="gray", wraplength=300,
+                  font=("Helvetica",8)).pack(padx=12)
+
         # --- Save ---
         self._section(left, "Save / Export")
         ttk.Button(left, text="Save All Plots (PNG)", command=self._save_plots).pack(fill=tk.X, padx=12, pady=2)
         ttk.Button(left, text="Save Scan GIF", command=self._save_gif).pack(fill=tk.X, padx=12, pady=2)
+        ttk.Button(left, text="Generate Report (PDF)", command=self._generate_report).pack(fill=tk.X, padx=12, pady=2)
         self.save_status = tk.StringVar(value="")
         ttk.Label(left, textvariable=self.save_status, foreground="gray", font=("Helvetica",8)).pack(padx=12)
 
@@ -872,6 +923,339 @@ class BeamGUI:
         self.scan_btn.config(state="normal"); self.scan_stop_btn.config(state="disabled")
         self.scan_status.set(f"Done ({len(self.scan_data['perveance'])} pts)" if not self.scan_stop else "Stopped")
         self.root.after(0, self._sim_done)
+
+    # ==================================================================
+    # Matched Beam Finder (golden section search for min divergence)
+    # ==================================================================
+    def _on_match_find(self):
+        err = self._validate()
+        if err: messagebox.showwarning("Invalid", err); return
+        try:
+            vmin = float(self.match_params["match_vmin"].get())
+            vmax = float(self.match_params["match_vmax"].get())
+            tol = abs(float(self.match_params["match_tol"].get()))
+            eidx = int(self.match_electrode.get())
+        except:
+            messagebox.showwarning("Invalid", "Check matched beam parameters"); return
+        if vmin > vmax: vmin, vmax = vmax, vmin
+        self.match_btn.config(state="disabled"); self.run_btn.config(state="disabled")
+        self.scan_btn.config(state="disabled")
+        self.match_status.set("Searching...")
+        self.progress.start(15)
+        try: div_offset = float(self.scan_div_offset.get())
+        except: div_offset = 0.0
+        threading.Thread(target=self._match_thread,
+                         args=(vmin, vmax, tol, eidx, div_offset), daemon=True).start()
+
+    def _match_thread(self, a, b, tol, eidx, div_offset):
+        gr = (np.sqrt(5) + 1) / 2
+        c = b - (b - a) / gr
+        d = a + (b - a) / gr
+
+        def eval_div(v):
+            ok = self._run_sim(voltage_override=(eidx, v))
+            if not ok: return 1e9
+            xe = self._last_elec_exit_mm() + div_offset
+            ie = self._idx_at_x(xe)
+            return abs(self.emittance_data["divergence_mrad"][ie])
+
+        self.root.after(0, lambda: self.match_status.set(f"Eval V={c:.3f} kV..."))
+        fc = eval_div(c)
+        self.root.after(0, lambda: self.match_status.set(f"Eval V={d:.3f} kV..."))
+        fd = eval_div(d)
+        iteration = 0
+        while abs(b - a) > tol:
+            iteration += 1
+            if fc < fd:
+                b = d; d = c; fd = fc
+                c = b - (b - a) / gr
+                self.root.after(0, lambda it=iteration,v=c: self.match_status.set(
+                    f"Iter {it}: V={v:.3f} kV..."))
+                fc = eval_div(c)
+            else:
+                a = c; c = d; fc = fd
+                d = a + (b - a) / gr
+                self.root.after(0, lambda it=iteration,v=d: self.match_status.set(
+                    f"Iter {it}: V={v:.3f} kV..."))
+                fd = eval_div(d)
+            self.root.after(0, self._update_all_scan_plots)
+
+        best_v = (a + b) / 2
+        self._run_sim(voltage_override=(eidx, best_v))
+        xe = self._last_elec_exit_mm() + div_offset
+        ie = self._idx_at_x(xe)
+        best_div = self.emittance_data["divergence_mrad"][ie]
+        best_div_deg = best_div * 180.0 / (np.pi * 1000.0)
+
+        self.root.after(0, lambda: self._match_done(best_v, best_div_deg, iteration))
+
+    def _update_all_scan_plots(self):
+        self._update_trajectory_plot(); self._update_divergence_plot()
+        self._update_field_plot(); self._update_convergence_plot(); self._update_energy_plot()
+        self._setup_slider(); self._on_slider(None)
+
+    def _match_done(self, best_v, best_div, iters):
+        self.progress.stop()
+        self.match_btn.config(state="normal"); self.run_btn.config(state="normal")
+        self.scan_btn.config(state="normal")
+        self.match_status.set(
+            f"Matched: V={best_v:.3f} kV, div={best_div:.3f}\u00b0 ({iters} iters)")
+        self._update_all_scan_plots()
+
+    # ==================================================================
+    # Auto-Optimizer (grid search over enabled parameters)
+    # ==================================================================
+    def _on_run_optimizer(self):
+        err = self._validate()
+        if err: messagebox.showwarning("Invalid", err); return
+        try:
+            eidx = int(self.opt_electrode.get())
+            steps = int(self.opt_steps.get())
+            if steps < 2: raise ValueError
+        except:
+            messagebox.showwarning("Invalid", "Check optimizer parameters"); return
+
+        sweep_axes = []
+        for key, label in [("opt_v","V(kV)"), ("opt_gap","Gap(mm)"), ("opt_apt","Apt(mm)")]:
+            if self.opt_params[key+"_on"].get():
+                lo = float(self.opt_params[key+"_min"].get())
+                hi = float(self.opt_params[key+"_max"].get())
+                if lo > hi: lo, hi = hi, lo
+                sweep_axes.append((key, label, np.linspace(lo, hi, steps)))
+        if not sweep_axes:
+            messagebox.showwarning("Invalid", "Enable at least one parameter to sweep"); return
+
+        self.opt_stop = False
+        self.opt_btn.config(state="disabled"); self.opt_stop_btn.config(state="normal")
+        self.run_btn.config(state="disabled"); self.scan_btn.config(state="disabled")
+        self.match_btn.config(state="disabled")
+        self.progress.start(15)
+        try: div_offset = float(self.scan_div_offset.get())
+        except: div_offset = 0.0
+        threading.Thread(target=self._opt_thread,
+                         args=(sweep_axes, eidx, div_offset), daemon=True).start()
+
+    def _opt_thread(self, sweep_axes, eidx, div_offset):
+        # Build grid of all parameter combinations
+        grids = [ax[2] for ax in sweep_axes]
+        mesh = np.meshgrid(*grids, indexing='ij')
+        combos = np.column_stack([m.ravel() for m in mesh])
+        total = len(combos)
+
+        best_div = 1e9; best_params = None; best_idx = 0
+        results = []
+
+        for i, combo in enumerate(combos):
+            if self.opt_stop: break
+            param_str = ", ".join(f"{sweep_axes[j][1]}={combo[j]:.2f}" for j in range(len(sweep_axes)))
+            self.root.after(0, lambda s=f"Opt {i+1}/{total}: {param_str}": self.opt_status.set(s))
+
+            # Apply parameter overrides
+            v_override = None; gap_override = None; apt_override = None
+            for j, (key, _, _) in enumerate(sweep_axes):
+                if key == "opt_v": v_override = (eidx, combo[j])
+                elif key == "opt_gap":
+                    gap_override = combo[j]
+                elif key == "opt_apt":
+                    apt_override = combo[j]
+
+            # Temporarily set gap/aperture if sweeping
+            orig_gap = None; orig_apt = None
+            if gap_override is not None and len(self.electrode_rows) >= eidx:
+                r = self.electrode_rows[eidx-1]["vars"]
+                orig_gap = r["gap"].get()
+                r["gap"].set(str(gap_override))
+            if apt_override is not None and len(self.electrode_rows) >= eidx:
+                r = self.electrode_rows[eidx-1]["vars"]
+                orig_apt = r["apt"].get()
+                r["apt"].set(str(apt_override))
+
+            ok = self._run_sim(voltage_override=v_override)
+
+            # Restore original values
+            if orig_gap is not None:
+                self.electrode_rows[eidx-1]["vars"]["gap"].set(orig_gap)
+            if orig_apt is not None:
+                self.electrode_rows[eidx-1]["vars"]["apt"].set(orig_apt)
+
+            if not ok: continue
+            if not self.emittance_data or not self.emittance_data.get("divergence_mrad"): continue
+
+            xe = self._last_elec_exit_mm() + div_offset
+            ie = self._idx_at_x(xe)
+            div_mrad = abs(self.emittance_data["divergence_mrad"][ie])
+            div_deg = div_mrad * 180.0 / (np.pi * 1000.0)
+            cur = self.emittance_data["current_A"][0]
+            gr = self._grid_ratio() * 100
+
+            results.append({"params": dict(zip([a[1] for a in sweep_axes], combo)),
+                            "div_deg": div_deg, "transmission": 100-gr, "current": cur})
+
+            if div_deg < best_div:
+                best_div = div_deg; best_params = combo.copy(); best_idx = i
+
+            self.root.after(0, self._update_all_scan_plots)
+
+        # Re-run best configuration
+        if best_params is not None:
+            for j, (key, _, _) in enumerate(sweep_axes):
+                if key == "opt_v": pass  # applied via override
+                elif key == "opt_gap" and len(self.electrode_rows) >= eidx:
+                    self.electrode_rows[eidx-1]["vars"]["gap"].set(str(best_params[j]))
+                elif key == "opt_apt" and len(self.electrode_rows) >= eidx:
+                    self.electrode_rows[eidx-1]["vars"]["apt"].set(str(best_params[j]))
+
+            v_ov = None
+            for j, (key, _, _) in enumerate(sweep_axes):
+                if key == "opt_v": v_ov = (eidx, best_params[j])
+            self._run_sim(voltage_override=v_ov)
+
+        self.opt_results = results
+        param_str = ", ".join(f"{sweep_axes[j][1]}={best_params[j]:.3f}"
+                              for j in range(len(sweep_axes))) if best_params is not None else "N/A"
+        self.root.after(0, lambda: self._opt_done(param_str, best_div, total))
+
+    def _opt_done(self, param_str, best_div, total):
+        self.progress.stop()
+        self.opt_btn.config(state="normal"); self.opt_stop_btn.config(state="disabled")
+        self.run_btn.config(state="normal"); self.scan_btn.config(state="normal")
+        self.match_btn.config(state="normal")
+        status = "Stopped" if self.opt_stop else f"Best: {param_str}, div={best_div:.3f}\u00b0 ({total} evals)"
+        self.opt_status.set(status)
+        self._update_all_scan_plots()
+
+    # ==================================================================
+    # Report Generator
+    # ==================================================================
+    def _generate_report(self):
+        path = filedialog.asksaveasfilename(title="Save Report", defaultextension=".pdf",
+                                            filetypes=[("PDF","*.pdf")])
+        if not path: return
+        try:
+            from matplotlib.backends.backend_pdf import PdfPages
+            import datetime
+
+            with PdfPages(path) as pdf:
+                # Page 1: Title + config summary
+                fig = Figure(figsize=(8.5, 11), dpi=100)
+                ax = fig.add_subplot(111)
+                ax.axis("off")
+
+                title = "IBSIMU Beam Extraction Report"
+                ax.text(0.5, 0.95, title, transform=ax.transAxes, fontsize=18,
+                        ha="center", va="top", fontweight="bold")
+                ax.text(0.5, 0.90, datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        transform=ax.transAxes, fontsize=10, ha="center", va="top", color="gray")
+
+                # Configuration summary
+                lines = []
+                lines.append("--- Simulation Parameters ---")
+                lines.append(f"Grid points: {self.general['grid'].get()}")
+                lines.append(f"Particles: {self.general['particles'].get()}")
+                lines.append(f"Current density: {self.general['current'].get()} A/m\u00b2")
+                lines.append(f"Beam energy: {self.general['energy'].get()} eV")
+                lines.append(f"Species: {self.species_var.get()}")
+                lines.append(f"Mass: {self.beam_mass_var.get()} amu, Charge: {self.beam_charge_var.get()} e")
+                lines.append(f"Solver: {self.solver_var.get()}")
+                lines.append(f"Beam mode: {self.beam_mode_var.get()}")
+                lines.append(f"B-field: {self.bfield_var.get()}")
+                lines.append("")
+                lines.append("--- Electrodes ---")
+                lines.append(f"{'#':<4}{'Gap':>8}{'Apt':>8}{'V(kV)':>8}{'Thk':>8}{'Chm':>6}{'Wall':>8}")
+                for i, r in enumerate(self.electrode_rows):
+                    v = r["vars"]
+                    lines.append(f"{i+1:<4}{v['gap'].get():>8}{v['apt'].get():>8}"
+                                 f"{v['volt'].get():>8}{v['thick'].get():>8}"
+                                 f"{v['chamfer'].get():>6}{v['wall'].get():>8}")
+
+                # Beam results at exit
+                if self.emittance_data and self.emittance_data.get("x_mm"):
+                    xe = self._last_elec_exit_mm()
+                    ie = self._idx_at_x(xe)
+                    lines.append("")
+                    lines.append("--- Results at Electrode Exit ---")
+                    lines.append(f"Exit position: {xe:.2f} mm")
+                    em_data = self.emittance_data
+                    if em_data.get("divergence_mrad"):
+                        lines.append(f"Divergence: {em_data['divergence_mrad'][ie]:.3f} mrad "
+                                     f"({em_data['divergence_mrad'][ie]*180/(np.pi*1000):.3f}\u00b0)")
+                    if em_data.get("r_rms_mm"):
+                        lines.append(f"RMS radius: {em_data['r_rms_mm'][ie]:.4f} mm")
+                    if em_data.get("current_A"):
+                        lines.append(f"Beam current: {em_data['current_A'][0]:.4e} A")
+                    gr = self._grid_ratio() * 100
+                    lines.append(f"Grid interception: {gr:.1f}%")
+                    lines.append(f"Transmission: {100-gr:.1f}%")
+
+                text = "\n".join(lines)
+                ax.text(0.05, 0.82, text, transform=ax.transAxes, fontsize=9,
+                        va="top", family="monospace",
+                        bbox=dict(boxstyle="round", facecolor="#f0f0f0", alpha=0.8))
+                pdf.savefig(fig); fig.clear()
+
+                # Page 2: Trajectory plot
+                fig2 = Figure(figsize=(8.5, 5), dpi=150)
+                ax2 = fig2.add_subplot(111)
+                if self.traj_image:
+                    ax2.imshow(np.array(self.traj_image), aspect="auto")
+                ax2.axis("off"); ax2.set_title("Particle Trajectories (Axisymmetric)")
+                fig2.tight_layout(); pdf.savefig(fig2); fig2.clear()
+
+                # Page 3: Phase space + beam profile
+                figs_to_save = [
+                    (self.emit_fig, "Phase Space"),
+                    (self.prof_fig, "Beam Profile"),
+                    (self.div_fig, "Envelope, Divergence & Transmission"),
+                    (self.field_fig, "Field Diagnostics"),
+                    (self.conv_fig, "Convergence"),
+                    (self.ek_fig, "Energy Distribution"),
+                ]
+                for src_fig, title in figs_to_save:
+                    src_fig.canvas.draw()
+                    buf = src_fig.canvas.buffer_rgba()
+                    w, h = src_fig.canvas.get_width_height()
+                    img = Image.frombuffer("RGBA", (w, h), buf).copy()
+                    pfig = Figure(figsize=(8.5, 5), dpi=150)
+                    pax = pfig.add_subplot(111)
+                    pax.imshow(np.array(img), aspect="auto")
+                    pax.axis("off"); pax.set_title(title)
+                    pfig.tight_layout(); pdf.savefig(pfig); pfig.clear()
+
+                # Perveance scan page (if data exists)
+                if hasattr(self, 'scan_data') and self.scan_data.get("perveance"):
+                    self.scan_fig.canvas.draw()
+                    buf = self.scan_fig.canvas.buffer_rgba()
+                    w, h = self.scan_fig.canvas.get_width_height()
+                    img = Image.frombuffer("RGBA", (w, h), buf).copy()
+                    pfig = Figure(figsize=(8.5, 5), dpi=150)
+                    pax = pfig.add_subplot(111)
+                    pax.imshow(np.array(img), aspect="auto")
+                    pax.axis("off"); pax.set_title("Perveance Scan")
+                    pfig.tight_layout(); pdf.savefig(pfig); pfig.clear()
+
+                # Optimizer results table (if available)
+                if hasattr(self, 'opt_results') and self.opt_results:
+                    fig_opt = Figure(figsize=(8.5, 11), dpi=100)
+                    ax_opt = fig_opt.add_subplot(111); ax_opt.axis("off")
+                    ax_opt.text(0.5, 0.97, "Optimizer Results", transform=ax_opt.transAxes,
+                                fontsize=14, ha="center", va="top", fontweight="bold")
+                    hdr = list(self.opt_results[0]["params"].keys()) + ["Div(\u00b0)", "Trans(%)", "I(A)"]
+                    rows = []
+                    for r in self.opt_results:
+                        row = [f"{v:.3f}" for v in r["params"].values()]
+                        row += [f"{r['div_deg']:.3f}", f"{r['transmission']:.1f}", f"{r['current']:.3e}"]
+                        rows.append(row)
+                    table = ax_opt.table(cellText=rows, colLabels=hdr, loc="upper center",
+                                         cellLoc="center")
+                    table.auto_set_font_size(False); table.set_fontsize(7)
+                    table.scale(1, 1.3)
+                    fig_opt.tight_layout(); pdf.savefig(fig_opt); fig_opt.clear()
+
+            self.save_status.set(f"Report saved: {os.path.basename(path)}")
+        except ImportError:
+            messagebox.showerror("Error", "matplotlib PDF backend required")
+        except Exception as e:
+            messagebox.showerror("Error", f"Report generation failed: {e}")
 
     # ==================================================================
     # GIF capture + save
