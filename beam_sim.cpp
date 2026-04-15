@@ -145,10 +145,11 @@ bool read_config( const string &filename, SimConfig &cfg )
             reading = true;
         } else if( reading && g_num_electrodes < n_expected
                            && g_num_electrodes < MAX_ELECTRODES ) {
-            double pos_mm, r_mm, v_kV, thick_mm, chamfer_deg;
+            double pos_mm, r_mm, v_kV, thick_mm, chamfer_deg, wall_mm = 0;
             istringstream iss( line );
-            // Format: position aperture voltage thickness chamfer
+            // Format: position aperture voltage thickness chamfer [wall_radius]
             if( !( iss >> pos_mm >> r_mm >> v_kV >> thick_mm >> chamfer_deg ) ) continue;
+            iss >> wall_mm;  // optional 6th field
             ElectrodeConfig &e = g_elec[g_num_electrodes];
             e.r_aperture = r_mm * 1e-3;
             e.thickness  = thick_mm * 1e-3;
@@ -159,7 +160,7 @@ bool read_config( const string &filename, SimConfig &cfg )
             if( chamfer_deg > 85.0 ) chamfer_deg = 85.0;
             e.slope   = ( chamfer_deg > 0.5 ) ? tan( chamfer_deg * M_PI / 180.0 ) : 0.0;
             e.voltage = v_kV * 1e3;
-            e.r_wall  = 3.0 * e.r_aperture;
+            e.r_wall  = ( wall_mm > r_mm ) ? wall_mm * 1e-3 : 3.0 * e.r_aperture;
             g_num_electrodes++;
         }
     }
@@ -371,6 +372,15 @@ int main( int argc, char **argv )
         gplotter.set_fieldgraph_plot( FIELD_TRAJDENS );
         gplotter.fieldgraph()->set_zscale( ZSCALE_RELLOG );
         gplotter.plot_png( outdir + "/trajectory.png" );
+    }
+
+    // ==================================================================
+    // OUTPUT 1b : domain bounds (for GUI axis labelling)
+    // ==================================================================
+    {
+        ofstream ofs( (outdir + "/domain.csv").c_str() );
+        ofs << "x_min_mm,x_max_mm,r_min_mm,r_max_mm\n";
+        ofs << 0.0 << "," << x_max*1e3 << "," << 0.0 << "," << r_max*1e3 << "\n";
     }
 
     // ==================================================================
