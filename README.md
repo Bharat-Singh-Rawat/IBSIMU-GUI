@@ -14,7 +14,9 @@ Interactive GUI for axisymmetric ion/electron beam extraction simulation using [
 ## Features
 
 ### Geometry & Electrodes
-- **Multi-electrode geometry** - up to 10 electrodes with individual position, aperture radius, voltage, and chamfer angle
+- **Multi-electrode geometry** - up to 10 electrodes with individual gap, aperture radius, voltage, thickness, chamfer angle, and wall radius
+- **Gap-based positioning** - specify gap between electrodes rather than absolute positions
+- **Independent wall radius** - electrode wall height decoupled from aperture (0 = auto 3x aperture)
 - Input validation with overlap detection
 
 ### Beam Species & Definition
@@ -35,7 +37,8 @@ Interactive GUI for axisymmetric ion/electron beam extraction simulation using [
 
 ### Diagnostics & Plots
 - **Particle trajectories** - axisymmetric geometry plot with trajectory density
-- **Phase-space plot** (y, y') with RMS emittance ellipse overlay, adjustable via slider
+- **Phase-space plot** (y, y') with density-based coloring (KDE) and colorbar, RMS emittance ellipse overlay, adjustable via slider
+- **Beam profile** - spatial histogram of particle positions at any axial location with RMS radius markers
 - **Beam envelope, divergence & transmission** profile along the beam path
 - **Field diagnostics** - electric potential, E-field, and B-field along the beam axis
 - **Convergence history** - log-scale plot of potential and space charge convergence per iteration
@@ -46,14 +49,36 @@ Interactive GUI for axisymmetric ion/electron beam extraction simulation using [
 ### Perveance Scan
 - Sweep **voltage** or **current density** with real-time plot updates
 - Signed voltage values: negative for ions, positive for electrons
-- Divergence measured at the **exit of the last electrode**
+- **Configurable density override** for voltage scans
+- **Configurable divergence measurement location** - specify distance (mm) past last electrode exit
+- Divergence displayed in **degrees**
 - **Dual y-axis**: divergence + grid current % vs perveance
 - All plots update live during scan (trajectory, phase space, field diagnostics, convergence, energy)
 - Optimal point (minimum divergence) marked with red star
 
-### Export
-- **Save All Plots (PNG)** - 7 high-resolution plots (trajectory, phase space, envelope, perveance scan, field diagnostics, convergence, energy distribution)
+### Matched Beam Finder
+- **Golden section search** to automatically find the electrode voltage that minimizes beam divergence
+- Configurable electrode, voltage range (min/max), and convergence tolerance
+- Typically converges in ~10 simulation evaluations
+- Updates all plots with the optimal configuration when complete
+
+### Auto-Optimizer
+- **Multi-parameter grid search** over any combination of voltage, gap, and aperture
+- Enable/disable each parameter independently with individual min/max ranges
+- Configurable number of steps per axis
+- Tracks divergence, transmission, and current for every evaluated combination
+- Automatically restores the best configuration found
+- Results stored for inclusion in PDF reports
+
+### Export & Reporting
+- **Save All Plots (PNG)** - 8 high-resolution plots (trajectory, phase space, beam profile, envelope, perveance scan, field diagnostics, convergence, energy distribution)
 - **Save Scan GIF** - animated GIF of beam evolution during perveance scan
+- **PDF Report Generator** - multi-page report containing:
+  - Simulation configuration summary (beam parameters, electrode table)
+  - Key results at electrode exit (divergence, RMS radius, current, transmission)
+  - All diagnostic plots (trajectory, phase space, beam profile, envelope, field, convergence, energy)
+  - Perveance scan results (if available)
+  - Optimizer results table with all evaluated parameter combinations (if available)
 
 ## Prerequisites
 
@@ -64,7 +89,7 @@ Interactive GUI for axisymmetric ion/electron beam extraction simulation using [
 sudo apt install build-essential pkg-config \
     libgsl-dev libcairo2-dev libgtk-3-dev libpng-dev \
     libfreetype-dev libfontconfig-dev zlib1g-dev \
-    python3 python3-tk python3-matplotlib python3-pil python3-numpy
+    python3 python3-tk python3-matplotlib python3-pil python3-numpy python3-scipy
 ```
 
 ### IBSimu library
@@ -101,11 +126,15 @@ python3 beam_gui.py
 4. Set electrode parameters
 5. Click **Run Simulation**
 6. Explore results with the slider and tabs:
+   - **Beam Profile** - spatial distribution histogram at selected axial position
    - **Envelope** - beam size, divergence, transmission along axis
    - **Field Diag** - potential and E-field profile
    - **Convergence** - iteration convergence history
    - **Perveance Scan** - sweep voltage/current for optimization
    - **Energy Dist.** - particle energy histogram at exit
+7. Use **Find Matched Beam** for automatic voltage optimization
+8. Use **Run Optimizer** for multi-parameter sweeps
+9. Click **Generate Report (PDF)** to export a complete summary
 
 ### Voltage conventions
 
