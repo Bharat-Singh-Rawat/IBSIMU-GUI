@@ -289,6 +289,13 @@ class BeamGUI:
         self.right_nb = ttk.Notebook(pf)
         self.right_nb.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
+        # Tab: Beam Profile
+        bpf = ttk.Frame(self.right_nb); self.right_nb.add(bpf, text="Beam Profile")
+        self.prof_fig = Figure(figsize=(5,3.3), dpi=100)
+        self.prof_ax = self.prof_fig.add_subplot(111)
+        self.prof_canvas = FigureCanvasTkAgg(self.prof_fig, master=bpf)
+        self.prof_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
         # Tab: Envelope
         ef = ttk.Frame(self.right_nb); self.right_nb.add(ef, text="Envelope")
         self.div_fig = Figure(figsize=(5,3.3), dpi=100)
@@ -726,9 +733,23 @@ class BeamGUI:
             f"transmit= {100-gr:.1f}%\n"
             + (f"Electrode currents:\n{elec_str}" if elec_str else ""))
 
-        # Phase space
-        self.emit_ax.clear()
-        self.emit_ax.scatter(yd, ypd, s=1.5, alpha=0.4, c="#1565C0", edgecolors="none")
+        # Phase space with density coloring
+        self.emit_fig.clear()
+        self.emit_ax = self.emit_fig.add_subplot(111)
+        if len(yd) > 10:
+            from scipy.stats import gaussian_kde
+            try:
+                xy = np.vstack([yd, ypd])
+                kde = gaussian_kde(xy)
+                density = kde(xy)
+                order = density.argsort()
+                sc = self.emit_ax.scatter(yd[order], ypd[order], s=1.5, alpha=0.6,
+                                          c=density[order], cmap="jet", edgecolors="none")
+                self.emit_fig.colorbar(sc, ax=self.emit_ax, label="Density", pad=0.02)
+            except:
+                self.emit_ax.scatter(yd, ypd, s=1.5, alpha=0.4, c="#1565C0", edgecolors="none")
+        else:
+            self.emit_ax.scatter(yd, ypd, s=1.5, alpha=0.4, c="#1565C0", edgecolors="none")
         self.emit_ax.set_xlabel("y (mm)"); self.emit_ax.set_ylabel("y' (mrad)")
         self.emit_ax.set_title(f"x={xm:.2f}mm  \u03b5={em:.4f} mm-mrad", fontsize=10)
         self.emit_ax.axhline(0,color="gray",lw=0.5); self.emit_ax.axvline(0,color="gray",lw=0.5)
@@ -740,6 +761,20 @@ class BeamGUI:
             self.emit_ax.plot(ye, ype, "r-", lw=1.5, alpha=0.8, label="RMS ellipse")
             self.emit_ax.legend(fontsize=8, loc="upper left")
         self.emit_fig.tight_layout(); self.emit_canvas.draw()
+
+        # Beam profile
+        self.prof_ax.clear()
+        if len(yd) > 2:
+            nbins = max(20, int(np.sqrt(len(yd))))
+            self.prof_ax.hist(yd, bins=nbins, color="#1565C0", alpha=0.7, edgecolor="white", lw=0.3)
+            self.prof_ax.axvline(0, color="gray", lw=0.5)
+            self.prof_ax.axvline(r_rms, color="red", lw=1.2, ls="--", label=f"r_rms={r_rms:.3f}mm")
+            self.prof_ax.axvline(-r_rms, color="red", lw=1.2, ls="--")
+        self.prof_ax.set_xlabel("y (mm)"); self.prof_ax.set_ylabel("Counts")
+        self.prof_ax.set_title(f"Beam Profile at x={xm:.2f}mm", fontsize=10)
+        self.prof_ax.grid(True, alpha=0.3)
+        self.prof_ax.legend(fontsize=8)
+        self.prof_fig.tight_layout(); self.prof_canvas.draw()
 
         # Div vline
         if self._div_vline:
@@ -767,7 +802,7 @@ class BeamGUI:
                           "grid_ratio":[],"scan_val":[]}
         self.run_btn.config(state="disabled"); self.scan_btn.config(state="disabled")
         self.scan_stop_btn.config(state="normal")
-        self.right_nb.select(3)  # Perveance Scan tab
+        self.right_nb.select(4)  # Perveance Scan tab
         scan_density = self.scan_density.get() if is_v else None
         try: div_offset = float(self.scan_div_offset.get())
         except: div_offset = 0.0
@@ -861,11 +896,12 @@ class BeamGUI:
         if not folder: return
         try:
             for fig,name in [(self.traj_fig,"trajectory"),(self.emit_fig,"phase_space"),
+                              (self.prof_fig,"beam_profile"),
                               (self.div_fig,"envelope"),(self.scan_fig,"perveance_scan"),
                               (self.field_fig,"field_diagnostics"),(self.conv_fig,"convergence"),
                               (self.ek_fig,"energy_distribution")]:
                 fig.savefig(os.path.join(folder,f"{name}.png"), dpi=150, bbox_inches="tight")
-            self.save_status.set(f"Saved 7 plots to {folder}")
+            self.save_status.set(f"Saved 8 plots to {folder}")
         except Exception as e: messagebox.showerror("Error",str(e))
 
     def _save_gif(self):
