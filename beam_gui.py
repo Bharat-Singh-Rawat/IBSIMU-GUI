@@ -1265,9 +1265,9 @@ class BeamGUI:
             imgs = []
             for fig in [self.traj_fig, self.emit_fig, self.scan_fig]:
                 fig.canvas.draw()
-                w, h = fig.canvas.get_width_height()
-                buf = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
-                imgs.append(Image.fromarray(buf, "RGBA").copy())
+                renderer = fig.canvas.get_renderer()
+                raw = np.array(renderer.buffer_rgba())
+                imgs.append(Image.fromarray(raw, "RGBA").copy())
             tw = imgs[0].width; bh = max(imgs[1].height, imgs[2].height); hw = tw//2
             comp = Image.new("RGBA",(tw, imgs[0].height+bh),(255,255,255,255))
             comp.paste(imgs[0],(0,0))
