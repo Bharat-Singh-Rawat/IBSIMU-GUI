@@ -1264,16 +1264,18 @@ class BeamGUI:
         try:
             imgs = []
             for fig in [self.traj_fig, self.emit_fig, self.scan_fig]:
-                fig.canvas.draw(); buf = fig.canvas.buffer_rgba()
-                w,h = fig.canvas.get_width_height()
-                imgs.append(Image.frombuffer("RGBA",(w,h),buf).copy())
+                fig.canvas.draw()
+                w, h = fig.canvas.get_width_height()
+                buf = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
+                imgs.append(Image.fromarray(buf, "RGBA").copy())
             tw = imgs[0].width; bh = max(imgs[1].height, imgs[2].height); hw = tw//2
             comp = Image.new("RGBA",(tw, imgs[0].height+bh),(255,255,255,255))
             comp.paste(imgs[0],(0,0))
             comp.paste(imgs[1].resize((hw,bh),Image.LANCZOS),(0,imgs[0].height))
             comp.paste(imgs[2].resize((tw-hw,bh),Image.LANCZOS),(hw,imgs[0].height))
             self.scan_frames.append(comp.convert("RGB"))
-        except: pass
+        except Exception as e:
+            print(f"Frame capture error: {e}")
 
     def _save_plots(self):
         folder = filedialog.askdirectory(title="Save plots to")
