@@ -398,6 +398,9 @@ int main( int argc, char **argv )
         ofstream ofs_ps( (outdir + "/phase_space.csv").c_str() );
         ofs_ps << "x_mm,y_mm,yp_mrad\n";
 
+        ofstream ofs_rps( (outdir + "/phase_space_radial.csv").c_str() );
+        ofs_rps << "x_mm,r_mm,rp_mrad\n";
+
         ofstream ofs_ek( (outdir + "/energy_distribution.csv").c_str() );
         ofs_ek << "x_mm,ek_eV\n";
 
@@ -423,6 +426,14 @@ int main( int argc, char **argv )
               for( size_t j=0; j<td.traj_size(); j++ )
                   ofs_ps << fixed << setprecision(6) << xp*1e3 << ","
                          << td(j,0)*1e3 << "," << td(j,1)*1e3 << "\n";
+            }
+
+            // R, R' scatter (radial phase space, consistent with emittance calc)
+            { vector<trajectory_diagnostic_e> d; d.push_back(DIAG_R); d.push_back(DIAG_RP);
+              TrajectoryDiagnosticData td; pdb.trajectories_at_plane(td,AXIS_X,xp,d);
+              for( size_t j=0; j<td.traj_size(); j++ )
+                  ofs_rps << fixed << setprecision(6) << xp*1e3 << ","
+                          << td(j,0)*1e3 << "," << td(j,1)*1e3 << "\n";
             }
 
             // Energy at a few positions

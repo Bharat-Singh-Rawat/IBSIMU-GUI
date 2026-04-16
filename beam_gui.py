@@ -596,6 +596,13 @@ class BeamGUI:
             for x in np.unique(xv):
                 m = xv==x; yh,yph = yv[m],ypv[m]
                 self.phase_space[x] = (np.concatenate([yh,-yh]), np.concatenate([yph,-yph]))
+        raw_r = self._csv(os.path.join(OUTPUT_DIR,"phase_space_radial.csv"))
+        self.phase_space_radial = {}
+        if raw_r and raw_r.get("x_mm"):
+            xv,rv,rpv = np.array(raw_r["x_mm"]),np.array(raw_r["r_mm"]),np.array(raw_r["rp_mrad"])
+            for x in np.unique(xv):
+                m = xv==x
+                self.phase_space_radial[x] = (rv[m], rpv[m])
         tf = os.path.join(OUTPUT_DIR,"trajectory.png")
         if os.path.exists(tf):
             img = Image.open(tf); img.load()
@@ -754,7 +761,10 @@ class BeamGUI:
         if not psk: return
         cx = min(psk, key=lambda k: abs(k-xm))
         yd, ypd = self.phase_space[cx]
-        em, al, be, _ = compute_twiss(yd, ypd)
+        # Use Twiss parameters from C++ radial emittance (consistent with divergence)
+        em = self.emittance_data["epsilon"][idx]
+        al = self.emittance_data["alpha"][idx]
+        be = self.emittance_data["beta"][idx]
         r_rms = self.emittance_data["r_rms_mm"][idx]
         div = self.emittance_data["divergence_mrad"][idx]
         cur = self.emittance_data["current_A"][idx]
