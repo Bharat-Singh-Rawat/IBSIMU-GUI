@@ -248,7 +248,7 @@ class BeamGUI:
         ttk.Label(sf_sig, text="Ellipse", width=6, anchor="w").pack(side=tk.LEFT)
         self.sigma_var = tk.StringVar(value="3")
         ttk.Combobox(sf_sig, textvariable=self.sigma_var, width=4,
-                     values=["1","2","3"], state="readonly").pack(side=tk.LEFT)
+                     values=["1","2","2.5","3"], state="readonly").pack(side=tk.LEFT)
         ttk.Label(sf_sig, text="\u03c3", width=2).pack(side=tk.LEFT)
 
         sbf = ttk.Frame(left); sbf.pack(fill=tk.X, padx=12, pady=4)
@@ -798,17 +798,17 @@ class BeamGUI:
                 except: eid_s = str(eid)
                 elec_str += f"  {eid_s}: {ec:.3e}A\n"
 
-        try: nsig_info = int(self.sigma_var.get())
+        try: nsig_info = float(self.sigma_var.get())
         except: nsig_info = 3
         self.pos_var.set(f"x = {xm:.2f} mm")
         self.info_var.set(
             f"Species : {self.species_var.get()}\n"
             f"x = {xm:.3f} mm\n"
-            f"eps({nsig_info}\u03c3) = {em*nsig_info**2:.4f} mm-mrad\n"
+            f"eps({nsig_info:g}\u03c3) = {em*nsig_info**2:.4f} mm-mrad\n"
             f"alpha   = {al:.3f}\n"
             f"beta    = {be:.4f} mm/mrad\n"
             f"r_rms   = {r_rms:.4f} mm\n"
-            f"div({nsig_info}\u03c3) = {div*nsig_info:.3f} mrad\n"
+            f"div({nsig_info:g}\u03c3) = {div*nsig_info:.3f} mrad\n"
             f"current = {cur:.4e} A\n"
             f"grid I% = {gr:.1f}%\n"
             f"transmit= {100-gr:.1f}%\n"
@@ -832,18 +832,18 @@ class BeamGUI:
         else:
             self.emit_ax.scatter(yd, ypd, s=1.5, alpha=0.4, c="#1565C0", edgecolors="none")
         self.emit_ax.set_xlabel("y (mm)"); self.emit_ax.set_ylabel("y' (mrad)")
-        try: nsig = int(self.sigma_var.get())
+        try: nsig = float(self.sigma_var.get())
         except: nsig = 3
-        self.emit_ax.set_title(f"x={xm:.2f}mm  \u03b5({nsig}\u03c3)={em*nsig**2:.4f} mm-mrad", fontsize=10)
+        self.emit_ax.set_title(f"x={xm:.2f}mm  \u03b5({nsig:g}\u03c3)={em*nsig**2:.4f} mm-mrad", fontsize=10)
         self.emit_ax.axhline(0,color="gray",lw=0.5); self.emit_ax.axvline(0,color="gray",lw=0.5)
         self.emit_ax.grid(True, alpha=0.3)
         if em > 0 and be > 0:
-            try: nsig = int(self.sigma_var.get())
+            try: nsig = float(self.sigma_var.get())
             except: nsig = 3
             t = np.linspace(0,2*np.pi,200); sb = np.sqrt(be)
             ye = nsig*np.sqrt(em)*sb*np.cos(t)
             ype = nsig*np.sqrt(em)*(-al/sb*np.cos(t)+1/sb*np.sin(t))
-            self.emit_ax.plot(ye, ype, "r-", lw=1.5, alpha=0.8, label=f"{nsig}\u03c3 ellipse")
+            self.emit_ax.plot(ye, ype, "r-", lw=1.5, alpha=0.8, label=f"{nsig:g}\u03c3 ellipse")
             self.emit_ax.legend(fontsize=8, loc="upper left")
         self.emit_fig.tight_layout(); self.emit_canvas.draw()
 
@@ -891,7 +891,7 @@ class BeamGUI:
         scan_density = self.scan_density.get() if is_v else None
         try: div_offset = float(self.scan_div_offset.get())
         except: div_offset = 0.0
-        try: nsig = int(self.sigma_var.get())
+        try: nsig = float(self.sigma_var.get())
         except: nsig = 3
         threading.Thread(target=self._scan_thread, args=(smin,smax,steps,is_v,scan_density,div_offset,nsig), daemon=True).start()
 
@@ -938,9 +938,9 @@ class BeamGUI:
         c1,c2 = "#1565C0","#E65100"
         ln1 = ax1.plot(p,d,"o-",color=c1,markersize=7,lw=2,label="Divergence")
         ax1.set_xlabel("Perveance (A / V$^{3/2}$)")
-        try: nsig = int(self.sigma_var.get())
+        try: nsig = float(self.sigma_var.get())
         except: nsig = 3
-        ax1.set_ylabel(f"{nsig}\u03c3 Divergence (\u00b0)",color=c1); ax1.tick_params(axis="y",labelcolor=c1)
+        ax1.set_ylabel(f"{nsig:g}\u03c3 Divergence (\u00b0)",color=c1); ax1.tick_params(axis="y",labelcolor=c1)
         ax2 = ax1.twinx()
         ln2 = ax2.plot(p,gr,"s--",color=c2,markersize=5,lw=1.5,label="Grid I %")
         ax2.set_ylabel("Grid current (%)",color=c2); ax2.tick_params(axis="y",labelcolor=c2)
