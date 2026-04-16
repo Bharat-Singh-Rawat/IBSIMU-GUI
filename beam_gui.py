@@ -929,7 +929,23 @@ class BeamGUI:
         self.scan_running = False; self.run_btn.config(state="normal")
         self.scan_btn.config(state="normal"); self.scan_stop_btn.config(state="disabled")
         self.scan_status.set(f"Done ({len(self.scan_data['perveance'])} pts)" if not self.scan_stop else "Stopped")
+        self._save_scan_csv()
         self.root.after(0, self._sim_done)
+
+    def _save_scan_csv(self):
+        if not self.scan_data or not self.scan_data.get("perveance"): return
+        try:
+            path = os.path.join(OUTPUT_DIR, "perveance_scan.csv")
+            sd = self.scan_data
+            with open(path, "w") as f:
+                f.write("scan_value,perveance_uA_V1.5,divergence_deg,grid_current_pct,voltage_V,current_A\n")
+                for i in range(len(sd["perveance"])):
+                    f.write(f"{sd['scan_val'][i]},{sd['perveance'][i]:.6f},{sd['divergence'][i]:.6f},"
+                            f"{sd['grid_ratio'][i]:.2f},{sd['voltage'][i]:.2f},{sd['current'][i]:.6e}\n")
+            self.root.after(0, lambda: self.scan_status.set(
+                self.scan_status.get() + f" | CSV: {os.path.basename(path)}"))
+        except Exception as e:
+            print(f"Scan CSV save error: {e}")
 
     # ==================================================================
     # Matched Beam Finder (golden section search for min divergence)
