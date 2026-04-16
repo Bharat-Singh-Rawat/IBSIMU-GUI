@@ -762,9 +762,10 @@ class BeamGUI:
         cx = min(psk, key=lambda k: abs(k-xm))
         yd, ypd = self.phase_space[cx]
         # Use Twiss parameters from C++ radial emittance (consistent with divergence)
-        em = self.emittance_data["epsilon"][idx]
-        al = self.emittance_data["alpha"][idx]
-        be = self.emittance_data["beta"][idx]
+        # CSV stores SI units (m·rad, m/rad); convert to mm·mrad for plotting
+        em = self.emittance_data["epsilon"][idx] * 1e6   # m·rad -> mm·mrad
+        al = self.emittance_data["alpha"][idx]            # dimensionless
+        be = self.emittance_data["beta"][idx] * 1e6       # m/rad -> mm/mrad
         r_rms = self.emittance_data["r_rms_mm"][idx]
         div = self.emittance_data["divergence_mrad"][idx]
         cur = self.emittance_data["current_A"][idx]
