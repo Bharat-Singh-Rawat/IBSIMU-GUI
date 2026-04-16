@@ -150,6 +150,17 @@ class BeamGUI:
             self.twiss_vars[k] = v
         self.twiss_frame.pack_forget()  # hidden by default
 
+        # --- Plasma Source ---
+        self.source_vars = {}
+        for l,k,d in [("Source x (mm):","source_x","0.0"),("Source r (mm):","source_r","0.0")]:
+            f = ttk.Frame(left); f.pack(fill=tk.X, padx=12, pady=1)
+            ttk.Label(f, text=l, width=18, anchor="w").pack(side=tk.LEFT)
+            v = tk.StringVar(value=d)
+            ttk.Entry(f, textvariable=v, width=10).pack(side=tk.LEFT)
+            self.source_vars[k] = v
+        ttk.Label(left, text="(r=0: auto = first electrode wall)", foreground="gray",
+                  font=("Helvetica",8)).pack(padx=12, anchor="w")
+
         # --- Magnetic field ---
         self._section(left, "Magnetic Field")
         bff = ttk.Frame(left); bff.pack(fill=tk.X, padx=12, pady=2)
@@ -232,6 +243,13 @@ class BeamGUI:
         self.scan_div_offset = tk.StringVar(value="0.0")
         ttk.Entry(sf_div, textvariable=self.scan_div_offset, width=10).pack(side=tk.LEFT)
         ttk.Label(sf_div, text="mm past exit", width=10, foreground="gray").pack(side=tk.LEFT, padx=4)
+
+        sf_sig = ttk.Frame(left); sf_sig.pack(fill=tk.X, padx=12, pady=2)
+        ttk.Label(sf_sig, text="Ellipse", width=6, anchor="w").pack(side=tk.LEFT)
+        self.sigma_var = tk.StringVar(value="3")
+        ttk.Combobox(sf_sig, textvariable=self.sigma_var, width=4,
+                     values=["1","2","3"], state="readonly").pack(side=tk.LEFT)
+        ttk.Label(sf_sig, text="\u03c3", width=2).pack(side=tk.LEFT)
 
         sbf = ttk.Frame(left); sbf.pack(fill=tk.X, padx=12, pady=4)
         self.scan_btn = ttk.Button(sbf, text="Run Scan", command=self._on_run_scan)
@@ -470,6 +488,9 @@ class BeamGUI:
                 f.write(f"beam_emittance={self.twiss_vars['tw_emit'].get()}\n")
             else:
                 f.write("beam_mode=energy\n")
+            # Plasma source
+            f.write(f"source_x={self.source_vars['source_x'].get()}\n")
+            f.write(f"source_r={self.source_vars['source_r'].get()}\n")
             # B-field
             if self.bfield_var.get() == "Solenoid":
                 f.write("bfield=solenoid\n")
@@ -777,15 +798,17 @@ class BeamGUI:
                 except: eid_s = str(eid)
                 elec_str += f"  {eid_s}: {ec:.3e}A\n"
 
+        try: nsig_info = int(self.sigma_var.get())
+        except: nsig_info = 3
         self.pos_var.set(f"x = {xm:.2f} mm")
         self.info_var.set(
             f"Species : {self.species_var.get()}\n"
             f"x = {xm:.3f} mm\n"
-            f"eps     = {em:.4f} mm-mrad\n"
+            f"eps({nsig_info}\u03c3) = {em*nsig_info**2:.4f} mm-mrad\n"
             f"alpha   = {al:.3f}\n"
             f"beta    = {be:.4f} mm/mrad\n"
             f"r_rms   = {r_rms:.4f} mm\n"
-            f"div     = {div:.3f} mrad\n"
+            f"div({nsig_info}\u03c3) = {div*nsig_info:.3f} mrad\n"
             f"current = {cur:.4e} A\n"
             f"grid I% = {gr:.1f}%\n"
             f"transmit= {100-gr:.1f}%\n"
@@ -809,14 +832,18 @@ class BeamGUI:
         else:
             self.emit_ax.scatter(yd, ypd, s=1.5, alpha=0.4, c="#1565C0", edgecolors="none")
         self.emit_ax.set_xlabel("y (mm)"); self.emit_ax.set_ylabel("y' (mrad)")
-        self.emit_ax.set_title(f"x={xm:.2f}mm  \u03b5={em:.4f} mm-mrad", fontsize=10)
+        try: nsig = int(self.sigma_var.get())
+        except: nsig = 3
+        self.emit_ax.set_title(f"x={xm:.2f}mm  \u03b5({nsig}\u03c3)={em*nsig**2:.4f} mm-mrad", fontsize=10)
         self.emit_ax.axhline(0,color="gray",lw=0.5); self.emit_ax.axvline(0,color="gray",lw=0.5)
         self.emit_ax.grid(True, alpha=0.3)
         if em > 0 and be > 0:
+            try: nsig = int(self.sigma_var.get())
+            except: nsig = 3
             t = np.linspace(0,2*np.pi,200); sb = np.sqrt(be)
-            ye = np.sqrt(em)*sb*np.cos(t)
-            ype = np.sqrt(em)*(-al/sb*np.cos(t)+1/sb*np.sin(t))
-            self.emit_ax.plot(ye, ype, "r-", lw=1.5, alpha=0.8, label="RMS ellipse")
+            ye = nsig*np.sqrt(em)*sb*np.cos(t)
+            ype = nsig*np.sqrt(em)*(-al/sb*np.cos(t)+1/sb*np.sin(t))
+            self.emit_ax.plot(ye, ype, "r-", lw=1.5, alpha=0.8, label=f"{nsig}\u03c3 ellipse")
             self.emit_ax.legend(fontsize=8, loc="upper left")
         self.emit_fig.tight_layout(); self.emit_canvas.draw()
 
@@ -864,9 +891,11 @@ class BeamGUI:
         scan_density = self.scan_density.get() if is_v else None
         try: div_offset = float(self.scan_div_offset.get())
         except: div_offset = 0.0
-        threading.Thread(target=self._scan_thread, args=(smin,smax,steps,is_v,scan_density,div_offset), daemon=True).start()
+        try: nsig = int(self.sigma_var.get())
+        except: nsig = 3
+        threading.Thread(target=self._scan_thread, args=(smin,smax,steps,is_v,scan_density,div_offset,nsig), daemon=True).start()
 
-    def _scan_thread(self, smin, smax, steps, is_v, scan_density, div_offset):
+    def _scan_thread(self, smin, smax, steps, is_v, scan_density, div_offset, nsig):
         vals = np.linspace(smin, smax, steps)
         eidx = int(self.scan_electrode.get()) if is_v else 0
         for i,val in enumerate(vals):
@@ -884,11 +913,11 @@ class BeamGUI:
             if not ok: break
             if not self.emittance_data or not self.emittance_data.get("divergence_mrad"): continue
             xe = self._last_elec_exit_mm() + div_offset; ie = self._idx_at_x(xe)
-            div = self.emittance_data["divergence_mrad"][ie] * 180.0 / (np.pi * 1000.0)
+            div = self.emittance_data["divergence_mrad"][ie] * nsig * 180.0 / (np.pi * 1000.0)
             cur = self.emittance_data["current_A"][0]
             gr = self._grid_ratio()
             if v_volts > 0:
-                perv = (abs(cur)/(v_volts**1.5))*1e6
+                perv = abs(cur)/(v_volts**1.5)
             else: continue
             self.scan_data["perveance"].append(perv); self.scan_data["divergence"].append(div)
             self.scan_data["voltage"].append(v_volts); self.scan_data["current"].append(cur)
@@ -908,8 +937,10 @@ class BeamGUI:
                      self.scan_data["grid_ratio"],self.scan_data["scan_val"]
         c1,c2 = "#1565C0","#E65100"
         ln1 = ax1.plot(p,d,"o-",color=c1,markersize=7,lw=2,label="Divergence")
-        ax1.set_xlabel("Perveance ($\\mu$A / V$^{3/2}$)")
-        ax1.set_ylabel("RMS Divergence (\u00b0)",color=c1); ax1.tick_params(axis="y",labelcolor=c1)
+        ax1.set_xlabel("Perveance (A / V$^{3/2}$)")
+        try: nsig = int(self.sigma_var.get())
+        except: nsig = 3
+        ax1.set_ylabel(f"{nsig}\u03c3 Divergence (\u00b0)",color=c1); ax1.tick_params(axis="y",labelcolor=c1)
         ax2 = ax1.twinx()
         ln2 = ax2.plot(p,gr,"s--",color=c2,markersize=5,lw=1.5,label="Grid I %")
         ax2.set_ylabel("Grid current (%)",color=c2); ax2.tick_params(axis="y",labelcolor=c2)
@@ -938,7 +969,7 @@ class BeamGUI:
             path = os.path.join(OUTPUT_DIR, "perveance_scan.csv")
             sd = self.scan_data
             with open(path, "w") as f:
-                f.write("scan_value,perveance_uA_V1.5,divergence_deg,grid_current_pct,voltage_V,current_A\n")
+                f.write("scan_value,perveance_A_V1.5,divergence_deg,grid_current_pct,voltage_V,current_A\n")
                 for i in range(len(sd["perveance"])):
                     f.write(f"{sd['scan_val'][i]},{sd['perveance'][i]:.6f},{sd['divergence'][i]:.6f},"
                             f"{sd['grid_ratio'][i]:.2f},{sd['voltage'][i]:.2f},{sd['current'][i]:.6e}\n")

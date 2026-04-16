@@ -105,6 +105,10 @@ struct SimConfig {
     double beam_beta    = 0.01;
     double beam_emittance = 1e-6;
 
+    // Plasma source
+    double source_x     = 0.0;      // axial position (m)
+    double source_r     = 0.0;      // radius (m), 0 = auto (first electrode wall)
+
     // B-field: "none" or "solenoid"
     string bfield_type  = "none";
     double sol_B0       = 0.0;      // Tesla
@@ -136,6 +140,8 @@ bool read_config( const string &filename, SimConfig &cfg )
         else if( line.find("beam_alpha=")      == 0 ) cfg.beam_alpha     = atof(line.substr(11).c_str());
         else if( line.find("beam_beta=")       == 0 ) cfg.beam_beta      = atof(line.substr(10).c_str());
         else if( line.find("beam_emittance=")  == 0 ) cfg.beam_emittance = atof(line.substr(15).c_str());
+        else if( line.find("source_x=")        == 0 ) cfg.source_x       = atof(line.substr(9).c_str()) * 1e-3;
+        else if( line.find("source_r=")        == 0 ) cfg.source_r       = atof(line.substr(9).c_str()) * 1e-3;
         else if( line.find("bfield=")          == 0 ) cfg.bfield_type    = line.substr(7);
         else if( line.find("sol_B0=")          == 0 ) cfg.sol_B0         = atof(line.substr(7).c_str());
         else if( line.find("sol_z1=")          == 0 ) cfg.sol_z1         = atof(line.substr(7).c_str()) * 1e-3;
@@ -296,7 +302,8 @@ int main( int argc, char **argv )
     bool pmirror[6] = { false, false, true, false, false, false };
     pdb.set_mirror( pmirror );
     pdb.set_polyint( true );
-    double r_source = g_elec[0].r_wall;
+    double r_source = (cfg.source_r > 0) ? cfg.source_r : g_elec[0].r_wall;
+    double x_source = cfg.source_x;
 
     // ---- Convergence tracking ----
     Convergence conv;
@@ -325,14 +332,14 @@ int main( int argc, char **argv )
                 cfg.current_density * r_source,  // total current (A) = J * aperture_width
                 cfg.beam_charge, cfg.beam_mass,
                 cfg.beam_alpha, cfg.beam_beta, cfg.beam_emittance,
-                cfg.beam_energy, 0.0 );
+                cfg.beam_energy, x_source );
         } else {
             // Energy/temperature beam (default)
             pdb.add_2d_beam_with_energy(
                 cfg.n_particles,
                 cfg.current_density, cfg.beam_charge, cfg.beam_mass,
                 cfg.beam_energy, 0.0, 2.0,
-                0.0, 0.0, 0.0, r_source );
+                x_source, 0.0, x_source, r_source );
         }
 
         pdb.iterate_trajectories( scharge, efield, *bfield_ptr );
