@@ -251,6 +251,19 @@ class BeamGUI:
                      values=["1","2","2.5","3"], state="readonly").pack(side=tk.LEFT)
         ttk.Label(sf_sig, text="\u03c3", width=2).pack(side=tk.LEFT)
 
+        sf_dvm = ttk.Frame(left); sf_dvm.pack(fill=tk.X, padx=12, pady=2)
+        ttk.Label(sf_dvm, text="Div. method", width=10, anchor="w").pack(side=tk.LEFT)
+        self.div_method_var = tk.StringVar(value="RMS (Twiss)")
+        dvm_cb = ttk.Combobox(sf_dvm, textvariable=self.div_method_var, width=16,
+                     values=["RMS (Twiss)","Direct RMS","Fraction (90%)","FWHM"],
+                     state="readonly")
+        dvm_cb.pack(side=tk.LEFT)
+        self.div_method_desc = tk.StringVar(value="")
+        ttk.Label(left, textvariable=self.div_method_desc, foreground="#555",
+                  wraplength=300, font=("Helvetica",8,"italic")).pack(padx=12, anchor="w")
+        dvm_cb.bind("<<ComboboxSelected>>", self._on_div_method)
+        self._on_div_method()
+
         sbf = ttk.Frame(left); sbf.pack(fill=tk.X, padx=12, pady=4)
         self.scan_btn = ttk.Button(sbf, text="Run Scan", command=self._on_run_scan)
         self.scan_btn.pack(side=tk.LEFT, padx=2, fill=tk.X, expand=True)
@@ -451,6 +464,23 @@ class BeamGUI:
         else:
             self.sol_frame.pack_forget()
 
+    def _on_div_method(self, *_):
+        descs = {
+            "RMS (Twiss)": "Divergence from Courant-Snyder: div = n\u03c3 \u00d7 \u221a(\u03b5\u00b7\u03b3). "
+                           "Uses Twiss parameters from the emittance ellipse. "
+                           "Sensitive to aberrations and tails.",
+            "Direct RMS":  "Direct RMS of particle angles: div = n\u03c3 \u00d7 \u221a(<y'\u00b2>). "
+                           "Statistically correct for any distribution. "
+                           "Sensitive to outliers in the tails.",
+            "Fraction (90%)": "Half-angle enclosing 90% of beam current. "
+                              "Robust against tails and aberrations. "
+                              "Similar to experimental slit/pepper-pot measurements.",
+            "FWHM":        "Full width at half maximum of the angular distribution. "
+                           "Characterizes the beam core, ignores aberrated tails. "
+                           "Best for beams with strong halo.",
+        }
+        self.div_method_desc.set(descs.get(self.div_method_var.get(), ""))
+
     def _on_scan_type(self, *_):
         is_v = self.scan_type.get() == "Voltage scan"
         u = "kV" if is_v else "A/m\u00b2"
@@ -604,6 +634,51 @@ class BeamGUI:
         c = np.array(self.emittance_data["current_A"])
         i0 = abs(c[0]) if abs(c[0]) > 0 else 1.0
         return np.abs(c) / i0 * 100.0
+
+    def _compute_divergence_deg(self, ie, nsig, method):
+        """Compute divergence in degrees using the selected method."""
+        if method == "RMS (Twiss)":
+            # From C++ Twiss: div_mrad = sqrt(eps*gamma), scale by nsigma
+            div_mrad = self.emittance_data["divergence_mrad"][ie] * nsig
+            return div_mrad * 180.0 / (np.pi * 1000.0)
+
+        # For other methods, get particle angles from phase space
+        xm = self.emittance_data["x_mm"][ie]
+        psk = sorted(self.phase_space.keys())
+        if not psk: return 0.0
+        cx = min(psk, key=lambda k: abs(k - xm))
+        _, ypd = self.phase_space[cx]
+        if len(ypd) < 3: return 0.0
+
+        if method == "Direct RMS":
+            # RMS of y' angles, scaled by nsigma
+            rms_mrad = np.sqrt(np.mean(ypd**2))
+            return rms_mrad * nsig * 180.0 / (np.pi * 1000.0)
+
+        elif method == "Fraction (90%)":
+            # Half-angle enclosing 90% of particles
+            angles = np.abs(ypd)
+            angles_sorted = np.sort(angles)
+            idx_90 = int(0.90 * len(angles_sorted)) - 1
+            if idx_90 < 0: idx_90 = 0
+            div_mrad = angles_sorted[idx_90]
+            return div_mrad * 180.0 / (np.pi * 1000.0)
+
+        elif method == "FWHM":
+            # FWHM of y' histogram
+            nbins = max(30, int(np.sqrt(len(ypd))))
+            counts, edges = np.histogram(ypd, bins=nbins)
+            centers = 0.5 * (edges[:-1] + edges[1:])
+            half_max = counts.max() / 2.0
+            above = np.where(counts >= half_max)[0]
+            if len(above) >= 2:
+                fwhm_mrad = centers[above[-1]] - centers[above[0]]
+            else:
+                fwhm_mrad = 0.0
+            # FWHM is full width, report as half-angle
+            return abs(fwhm_mrad) * 0.5 * 180.0 / (np.pi * 1000.0)
+
+        return 0.0
 
     # ==================================================================
     # Load results
@@ -893,9 +968,10 @@ class BeamGUI:
         except: div_offset = 0.0
         try: nsig = float(self.sigma_var.get())
         except: nsig = 3
-        threading.Thread(target=self._scan_thread, args=(smin,smax,steps,is_v,scan_density,div_offset,nsig), daemon=True).start()
+        div_method = self.div_method_var.get()
+        threading.Thread(target=self._scan_thread, args=(smin,smax,steps,is_v,scan_density,div_offset,nsig,div_method), daemon=True).start()
 
-    def _scan_thread(self, smin, smax, steps, is_v, scan_density, div_offset, nsig):
+    def _scan_thread(self, smin, smax, steps, is_v, scan_density, div_offset, nsig, div_method):
         vals = np.linspace(smin, smax, steps)
         eidx = int(self.scan_electrode.get()) if is_v else 0
         for i,val in enumerate(vals):
@@ -913,7 +989,7 @@ class BeamGUI:
             if not ok: break
             if not self.emittance_data or not self.emittance_data.get("divergence_mrad"): continue
             xe = self._last_elec_exit_mm() + div_offset; ie = self._idx_at_x(xe)
-            div = self.emittance_data["divergence_mrad"][ie] * nsig * 180.0 / (np.pi * 1000.0)
+            div = self._compute_divergence_deg(ie, nsig, div_method)
             cur = self.emittance_data["current_A"][0]
             gr = self._grid_ratio()
             if v_volts > 0:
@@ -940,7 +1016,14 @@ class BeamGUI:
         ax1.set_xlabel("Perveance (A / V$^{3/2}$)")
         try: nsig = float(self.sigma_var.get())
         except: nsig = 3
-        ax1.set_ylabel(f"{nsig:g}\u03c3 Divergence (\u00b0)",color=c1); ax1.tick_params(axis="y",labelcolor=c1)
+        dm = self.div_method_var.get()
+        if dm == "Fraction (90%)":
+            div_label = "90% Divergence (\u00b0)"
+        elif dm == "FWHM":
+            div_label = "FWHM/2 Divergence (\u00b0)"
+        else:
+            div_label = f"{nsig:g}\u03c3 Divergence (\u00b0)"
+        ax1.set_ylabel(div_label, color=c1); ax1.tick_params(axis="y",labelcolor=c1)
         ax2 = ax1.twinx()
         ln2 = ax2.plot(p,gr,"s--",color=c2,markersize=5,lw=1.5,label="Grid I %")
         ax2.set_ylabel("Grid current (%)",color=c2); ax2.tick_params(axis="y",labelcolor=c2)
