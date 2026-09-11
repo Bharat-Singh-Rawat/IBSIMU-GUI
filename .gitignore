@@ -12,6 +12,11 @@ sim_output/
 __pycache__/
 *.pyc
 buildenv/
+venv/
+
+# IBSIMU source and installed library
+ibsimu/
+ibsimu-install/
 
 # PyInstaller
 build/

@@ -84,6 +84,33 @@ SolidFunc g_solid_funcs[MAX_ELECTRODES] = {
     electrode_solid<9>
 };
 
+// Count each particle once if its stored trajectory reaches the diagnostic plane.
+double beam_current_at_plane( const ParticleDataBase &pdb, double x_plane )
+{
+    double current = 0.0;
+    for( uint32_t i = 0; i < pdb.size(); i++ ) {
+        size_t npoints = pdb.traj_size( i );
+        if( npoints < 2 )
+            continue;
+        bool reaches_plane = false;
+        for( size_t j = 1; j < npoints; j++ ) {
+            double t1, t2;
+            Vec3D loc1, loc2, vel1, vel2;
+            pdb.trajectory_point( t1, loc1, vel1, i, j-1 );
+            pdb.trajectory_point( t2, loc2, vel2, i, j );
+            double x1 = loc1[0];
+            double x2 = loc2[0];
+            if( x1 <= x_plane && x_plane <= x2 && x2 > x1 ) {
+                reaches_plane = true;
+                break;
+            }
+        }
+        if( reaches_plane )
+            current += pdb.particle( i ).IQ();
+    }
+    return current;
+}
+
 // =========================================================================
 // Configuration
 // =========================================================================
@@ -313,7 +340,7 @@ int main( int argc, char **argv )
     conv.add_emittance( 0, conv_emit );
 
     // ---- Vlasov iteration ----
-    int n_iter = 5;
+    int n_iter = 100;
     for( int it = 0; it < n_iter; it++ ) {
         if( it == 1 && !is_electron ) {
             double rhoe = pdb.get_rhosum();
@@ -425,7 +452,7 @@ int main( int argc, char **argv )
                   << scientific << setprecision(6) << eps << "," << al << ","
                   << be << "," << ga << ","
                   << fixed << setprecision(6) << r_rms*1e3 << "," << div*1e3 << ","
-                  << scientific << setprecision(6) << em.current() << "\n";
+                  << scientific << setprecision(6) << beam_current_at_plane(pdb, xp) << "\n";
 
             // Y, Y' scatter
             { vector<trajectory_diagnostic_e> d; d.push_back(DIAG_Y); d.push_back(DIAG_YP);

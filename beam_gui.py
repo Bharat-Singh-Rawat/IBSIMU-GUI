@@ -55,8 +55,8 @@ class BeamGUI:
         self.scan_stop = False
         self.scan_is_vscan = True
         self.scan_frames = []
-        self.scan_data = {"perveance":[],"divergence":[],"voltage":[],"current":[],
-                          "grid_ratio":[],"scan_val":[]}
+        self.scan_data = {"curves":{},"divergence":[],"voltage":[],
+                  "grid_ratio":[],"scan_val":[]}
 
         self._species_presets = {
             "e\u207b (electron)":(0.000548579909,-1.0),
@@ -93,7 +93,6 @@ class BeamGUI:
         for l,k,d in [("Grid points (x)","grid","241"),("Particles","particles","5000"),
                        ("Current density (A/m\u00b2)","current","600"),("Beam energy (eV)","energy","5.0")]:
             self._param_row(left, l, k, d, self.general)
-
         # --- Solver ---
         sf = ttk.Frame(left); sf.pack(fill=tk.X, padx=12, pady=2)
         ttk.Label(sf, text="Solver:", width=16, anchor="w").pack(side=tk.LEFT)
@@ -220,6 +219,14 @@ class BeamGUI:
         self.scan_electrode = tk.StringVar(value="2")
         ttk.Entry(sf2, textvariable=self.scan_electrode, width=5).pack(side=tk.LEFT)
 
+        sf_cur = ttk.LabelFrame(left, text="Current sources")
+        sf_cur.pack(fill=tk.X, padx=12, pady=3)
+        self.scan_current_vars = {}
+        for name in ("Input: J x source area", "Past screen grid", "Past acc grid"):
+            var = tk.BooleanVar(value=True)
+            self.scan_current_vars[name] = var
+            ttk.Checkbutton(sf_cur, text=name, variable=var).pack(anchor="w", padx=5)
+
         self.scan_params = {}; self.scan_labels = {}
         for l,k,d,u in [("Min","min","-2.0","kV"),("Max","max","-15.0","kV"),("Steps","steps","8","")]:
             f = ttk.Frame(left); f.pack(fill=tk.X, padx=12, pady=2)
@@ -271,6 +278,8 @@ class BeamGUI:
         self.scan_stop_btn.pack(side=tk.LEFT, padx=2)
         self.scan_status = tk.StringVar(value="")
         ttk.Label(left, textvariable=self.scan_status, foreground="gray").pack(padx=12)
+        ttk.Button(left, text="Scan Diagnostics", command=self._show_scan_diagnostics).pack(
+            fill=tk.X, padx=12, pady=(1, 4))
 
         # --- Matched Beam Finder ---
         self._section(left, "Matched Beam Finder")
@@ -958,8 +967,14 @@ class BeamGUI:
         is_v = self.scan_type.get() == "Voltage scan"
         self.scan_running = True; self.scan_stop = False; self.scan_is_vscan = is_v
         self.scan_frames = []
-        self.scan_data = {"perveance":[],"divergence":[],"voltage":[],"current":[],
-                          "grid_ratio":[],"scan_val":[]}
+        selected_currents = [name for name, var in self.scan_current_vars.items() if var.get()]
+        if not selected_currents:
+            messagebox.showwarning("Invalid", "Select at least one current source")
+            return
+        self.scan_data = {
+            "curves": {name: {"perveance": [], "current": []} for name in selected_currents},
+            "divergence": [], "voltage": [], "grid_ratio": [], "scan_val": []
+        }
         self.run_btn.config(state="disabled"); self.scan_btn.config(state="disabled")
         self.scan_stop_btn.config(state="normal")
         self.right_nb.select(4)  # Perveance Scan tab
@@ -969,9 +984,11 @@ class BeamGUI:
         try: nsig = float(self.sigma_var.get())
         except: nsig = 3
         div_method = self.div_method_var.get()
-        threading.Thread(target=self._scan_thread, args=(smin,smax,steps,is_v,scan_density,div_offset,nsig,div_method), daemon=True).start()
+        threading.Thread(target=self._scan_thread, args=(smin,smax,steps,is_v,scan_density,
+                         div_offset,nsig,div_method,selected_currents), daemon=True).start()
 
-    def _scan_thread(self, smin, smax, steps, is_v, scan_density, div_offset, nsig, div_method):
+    def _scan_thread(self, smin, smax, steps, is_v, scan_density, div_offset, nsig,
+                     div_method, selected_currents):
         vals = np.linspace(smin, smax, steps)
         eidx = int(self.scan_electrode.get()) if is_v else 0
         for i,val in enumerate(vals):
@@ -990,13 +1007,45 @@ class BeamGUI:
             if not self.emittance_data or not self.emittance_data.get("divergence_mrad"): continue
             xe = self._last_elec_exit_mm() + div_offset; ie = self._idx_at_x(xe)
             div = self._compute_divergence_deg(ie, nsig, div_method)
-            cur = self.emittance_data["current_A"][0]
+            current_data = self.emittance_data["current_A"]
+            positions = self._electrode_positions()
+            screen_end = positions[0][1]
+            if len(positions) > 1 and positions[1][0] > screen_end:
+                # Sample in the extraction gap, away from the screen boundary.
+                screen_sample = screen_end + 0.25 * (positions[1][0] - screen_end)
+            else:
+                screen_sample = screen_end + 0.5 * (self.emittance_data["x_mm"][1] -
+                                                    self.emittance_data["x_mm"][0])
+            screen_i = self._idx_at_x(screen_sample)
+            acc_i = self._idx_at_x(self._last_elec_exit_mm())
+            try:
+                density = float(self.scan_density.get() if is_v else val)
+            except (TypeError, ValueError):
+                density = 0.0
+            try:
+                first_vars = self.electrode_rows[0]["vars"]
+                aperture_mm = float(first_vars["apt"].get())
+                source_r_mm = float(self.source_vars["source_r"].get())
+                if source_r_mm <= 0:
+                    wall_mm = float(first_vars["wall"].get())
+                    source_r_mm = wall_mm if wall_mm > aperture_mm else 3.0 * aperture_mm
+                source_radius_m = source_r_mm * 1e-3
+            except (IndexError, KeyError, TypeError, ValueError):
+                source_radius_m = 0.0
+            currents = {
+                "Input: J x source area": abs(density) * np.pi * source_radius_m**2,
+                "Past screen grid": abs(current_data[screen_i]),
+                "Past acc grid": abs(current_data[acc_i]),
+            }
             gr = self._grid_ratio()
             if v_volts > 0:
-                perv = abs(cur)/(v_volts**1.5)
+                for name in selected_currents:
+                    cur = currents[name]
+                    self.scan_data["curves"][name]["perveance"].append(cur/(v_volts**1.5))
+                    self.scan_data["curves"][name]["current"].append(cur)
             else: continue
-            self.scan_data["perveance"].append(perv); self.scan_data["divergence"].append(div)
-            self.scan_data["voltage"].append(v_volts); self.scan_data["current"].append(cur)
+            self.scan_data["divergence"].append(div)
+            self.scan_data["voltage"].append(v_volts)
             self.scan_data["grid_ratio"].append(gr*100); self.scan_data["scan_val"].append(label)
             self.root.after(0, self._update_all_scan)
         self.root.after(0, self._scan_done)
@@ -1009,10 +1058,18 @@ class BeamGUI:
 
     def _redraw_scan(self):
         self.scan_fig.clear(); ax1 = self.scan_fig.add_subplot(111); self.scan_ax = ax1
-        p,d,gr,lb = self.scan_data["perveance"],self.scan_data["divergence"],\
-                     self.scan_data["grid_ratio"],self.scan_data["scan_val"]
-        c1,c2 = "#1565C0","#E65100"
-        ln1 = ax1.plot(p,d,"o-",color=c1,markersize=7,lw=2,label="Divergence")
+        d,gr,lb = self.scan_data["divergence"],self.scan_data["grid_ratio"],self.scan_data["scan_val"]
+        colors = ["#1565C0", "#E65100", "#2E7D32"]
+        c1, c2 = colors[0], colors[1]
+        curve_lines = []
+        for color, (name, curve) in zip(colors, self.scan_data["curves"].items()):
+            line, = ax1.plot(curve["perveance"], d, "o-", color=color, markersize=6,
+                             lw=2, label=name)
+            curve_lines.append(line)
+            if len(d) > 1:
+                im = int(np.argmin(d))
+                ax1.plot(curve["perveance"][im], d[im], "*", color=color,
+                         markersize=13, zorder=5)
         ax1.set_xlabel("Perveance (A / V$^{3/2}$)")
         try: nsig = float(self.sigma_var.get())
         except: nsig = 3
@@ -1025,41 +1082,110 @@ class BeamGUI:
             div_label = f"{nsig:g}\u03c3 Divergence (\u00b0)"
         ax1.set_ylabel(div_label, color=c1); ax1.tick_params(axis="y",labelcolor=c1)
         ax2 = ax1.twinx()
-        ln2 = ax2.plot(p,gr,"s--",color=c2,markersize=5,lw=1.5,label="Grid I %")
-        ax2.set_ylabel("Grid current (%)",color=c2); ax2.tick_params(axis="y",labelcolor=c2)
+        reference_curve = next(iter(self.scan_data["curves"].values()))
+        ln2 = ax2.plot(reference_curve["perveance"], gr, "s:", color="#666666",
+                   markersize=5, lw=1.5, label="Grid loss (%)")
+        ax2.set_ylabel("Grid loss (%)", color="#666666")
+        ax2.tick_params(axis="y", labelcolor="#666666")
         ax2.set_ylim(bottom=0)
-        for i in range(len(p)):
-            ax1.annotate(lb[i],(p[i],d[i]),textcoords="offset points",xytext=(6,6),fontsize=7,color="gray")
         st = "Voltage" if self.scan_is_vscan else "Current"
         ax1.set_title(f"Perveance Scan ({st})"); ax1.grid(True,alpha=0.3)
-        if len(d) > 1:
-            im = int(np.argmin(d))
-            ax1.plot(p[im],d[im],"*",color="red",markersize=15,zorder=5,
-                     label=f"Min: {d[im]:.2f}\u00b0 @ {lb[im]}")
-        lns = ln1+ln2; ax1.legend(lns,[l.get_label() for l in lns],loc="upper left",fontsize=7)
+        legend_lines = curve_lines + [ln2[0]]
+        ax1.legend(legend_lines, [line.get_label() for line in legend_lines],
+               loc="upper left", fontsize=7)
         self.scan_fig.tight_layout(); self.scan_canvas.draw()
 
     def _scan_done(self):
         self.scan_running = False; self.run_btn.config(state="normal")
         self.scan_btn.config(state="normal"); self.scan_stop_btn.config(state="disabled")
-        self.scan_status.set(f"Done ({len(self.scan_data['perveance'])} pts)" if not self.scan_stop else "Stopped")
+        self.scan_status.set(f"Done ({len(self.scan_data['divergence'])} pts)" if not self.scan_stop else "Stopped")
         self._save_scan_csv()
         self.root.after(0, self._sim_done)
 
     def _save_scan_csv(self):
-        if not self.scan_data or not self.scan_data.get("perveance"): return
+        if not self.scan_data or not self.scan_data.get("curves"): return
         try:
             path = os.path.join(OUTPUT_DIR, "perveance_scan.csv")
             sd = self.scan_data
             with open(path, "w") as f:
-                f.write("scan_value,perveance_A_V1.5,divergence_deg,grid_current_pct,voltage_V,current_A\n")
-                for i in range(len(sd["perveance"])):
-                    f.write(f"{sd['scan_val'][i]},{sd['perveance'][i]:.6f},{sd['divergence'][i]:.6f},"
-                            f"{sd['grid_ratio'][i]:.2f},{sd['voltage'][i]:.2f},{sd['current'][i]:.6e}\n")
+                fields = ["scan_value", "divergence_deg", "grid_current_pct", "voltage_V"]
+                for name in sd["curves"]:
+                    key = name.lower().replace(":", "").replace(" ", "_").replace("x", "by")
+                    fields += [f"{key}_perveance_A_V1.5", f"{key}_current_A"]
+                f.write(",".join(fields) + "\n")
+                for i, label in enumerate(sd["scan_val"]):
+                    row = [label, f"{sd['divergence'][i]:.6f}",
+                           f"{sd['grid_ratio'][i]:.2f}", f"{sd['voltage'][i]:.2f}"]
+                    for curve in sd["curves"].values():
+                        row += [f"{curve['perveance'][i]:.6f}", f"{curve['current'][i]:.6e}"]
+                    f.write(",".join(row) + "\n")
             self.root.after(0, lambda: self.scan_status.set(
                 self.scan_status.get() + f" | CSV: {os.path.basename(path)}"))
         except Exception as e:
             print(f"Scan CSV save error: {e}")
+
+    def _show_scan_diagnostics(self):
+        """Show numeric scan values and the latest particle-boundary statistics."""
+        win = tk.Toplevel(self.root)
+        win.title("Perveance Scan Diagnostics")
+        win.geometry("1100x600")
+        win.minsize(800, 400)
+
+        frame = ttk.Frame(win, padding=8)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Scan point diagnostics", font=("Helvetica", 11, "bold")).pack(
+            anchor="w", pady=(0, 4))
+
+        curves = self.scan_data.get("curves", {})
+        columns = ["point", "scan", "voltage", "divergence", "grid_loss"]
+        headings = ["#", "Scan value", "Voltage (V)", "Divergence (deg)", "Grid loss (%)"]
+        for name in curves:
+            key = name.lower().replace(":", "").replace(" ", "_").replace("x", "by")
+            columns.extend([key + "_current", key + "_perveance"])
+            headings.extend([name + " current (A)", name + " perveance"])
+
+        table_frame = ttk.Frame(frame)
+        table_frame.pack(fill=tk.BOTH, expand=True)
+        tree = ttk.Treeview(table_frame, columns=columns, show="headings")
+        yscroll = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=tree.yview)
+        xscroll = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL, command=tree.xview)
+        tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        yscroll.grid(row=0, column=1, sticky="ns")
+        xscroll.grid(row=1, column=0, sticky="ew")
+        table_frame.rowconfigure(0, weight=1); table_frame.columnconfigure(0, weight=1)
+        for column, heading in zip(columns, headings):
+            tree.heading(column, text=heading)
+            tree.column(column, width=125 if column not in ("point", "scan") else 90,
+                        anchor="e" if column not in ("point", "scan") else "w")
+
+        data = self.scan_data
+        for i, scan_value in enumerate(data.get("scan_val", [])):
+            values = [i + 1, scan_value, f"{data['voltage'][i]:.6g}",
+                      f"{data['divergence'][i]:.6g}", f"{data['grid_ratio'][i]:.6g}"]
+            for curve in curves.values():
+                values.extend([f"{curve['current'][i]:.6e}",
+                               f"{curve['perveance'][i]:.6e}"])
+            tree.insert("", tk.END, values=values)
+
+        ttk.Label(frame, text="Latest boundary diagnostics", font=("Helvetica", 11, "bold")).pack(
+            anchor="w", pady=(10, 4))
+        boundary_columns = ("boundary", "id", "current", "collisions")
+        boundary_tree = ttk.Treeview(frame, columns=boundary_columns, show="headings", height=6)
+        for column, heading, width in zip(boundary_columns,
+                                          ("Boundary", "ID", "Current (A)", "Collisions"),
+                                          (180, 70, 150, 110)):
+            boundary_tree.heading(column, text=heading)
+            boundary_tree.column(column, width=width, anchor="e" if column != "boundary" else "w")
+        boundary_tree.pack(fill=tk.X)
+        stats = self.electrode_currents or {}
+        rows = zip(stats.get("electrode", []), stats.get("boundary_id", []),
+                   stats.get("current_A", []), stats.get("collisions", []))
+        for boundary, boundary_id, current, collisions in rows:
+            boundary_tree.insert("", tk.END, values=(boundary, int(boundary_id),
+                               f"{current:.6e}", int(collisions)))
+        ttk.Label(frame, text="Boundary totals are from the most recently completed simulation.",
+                  foreground="gray").pack(anchor="w", pady=(4, 0))
 
     # ==================================================================
     # Matched Beam Finder (golden section search for min divergence)
@@ -1359,7 +1485,7 @@ class BeamGUI:
                     pfig.tight_layout(); pdf.savefig(pfig); pfig.clear()
 
                 # Perveance scan page (if data exists)
-                if hasattr(self, 'scan_data') and self.scan_data.get("perveance"):
+                if hasattr(self, 'scan_data') and self.scan_data.get("curves"):
                     self.scan_fig.canvas.draw()
                     buf = self.scan_fig.canvas.buffer_rgba()
                     w, h = self.scan_fig.canvas.get_width_height()

@@ -1,14 +1,11 @@
 CXX = g++
-IBSIMU_SRC = ../src
-IBSIMU_LIB = ../src/.libs
+IBSIMU_INSTALL = $(dir $(abspath $(lastword $(MAKEFILE_LIST))))ibsimu-install
 
-# Flags from ibsimu's own build + pkg-config dependencies
-CXXFLAGS = -g -O2 -I$(IBSIMU_SRC) \
-           $(shell pkg-config --cflags cairo fontconfig freetype2 gsl gtk+-3.0 libpng)
+CXXFLAGS = -g -O2 \
+           $(shell PKG_CONFIG_PATH=$(IBSIMU_INSTALL)/lib/pkgconfig pkg-config --cflags ibsimu-1.0.6dev)
 
-LDFLAGS = -L$(IBSIMU_LIB) -Wl,-rpath,$(shell realpath $(IBSIMU_LIB)) \
-          -libsimu-1.0.6dev \
-          $(shell pkg-config --libs cairo fontconfig freetype2 gsl gtk+-3.0 libpng) \
+LDFLAGS = -Wl,-rpath,$(IBSIMU_INSTALL)/lib \
+          $(shell PKG_CONFIG_PATH=$(IBSIMU_INSTALL)/lib/pkgconfig pkg-config --libs ibsimu-1.0.6dev) \
           -lm -lz -lrt
 
 all: beam_sim
