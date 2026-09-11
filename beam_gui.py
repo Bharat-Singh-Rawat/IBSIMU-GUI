@@ -46,6 +46,7 @@ class BeamGUI:
         self.emittance_data = None
         self.phase_space = None
         self.traj_image = None
+        self.mesh_image = None
         self.field_data = None
         self.convergence_data = None
         self.electrode_currents = None
@@ -351,7 +352,9 @@ class BeamGUI:
         rpw.pack(fill=tk.BOTH, expand=True)
 
         # Top: trajectory
-        tf = ttk.LabelFrame(rpw, text="Particle Trajectories (Axisymmetric)")
+        ttk.Style().configure("Bold.TLabelframe.Label", font=("Helvetica", 11, "bold"))
+        tf = ttk.LabelFrame(rpw, text="Particle Trajectories (Axisymmetric)",
+                             style="Bold.TLabelframe")
         rpw.add(tf, weight=1)
         self.traj_fig = Figure(figsize=(10,3), dpi=100, facecolor="#f5f5f5")
         self.traj_ax = self.traj_fig.add_subplot(111); self.traj_ax.axis("off")
@@ -421,6 +424,13 @@ class BeamGUI:
         self.ek_ax = self.ek_fig.add_subplot(111)
         self.ek_canvas = FigureCanvasTkAgg(self.ek_fig, master=ekf)
         self.ek_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # Tab: Mesh / Geometry
+        mshf = ttk.Frame(self.right_nb); self.right_nb.add(mshf, text="Mesh")
+        self.mesh_fig = Figure(figsize=(5,3.3), dpi=100, facecolor="#f5f5f5")
+        self.mesh_ax = self.mesh_fig.add_subplot(111); self.mesh_ax.axis("off")
+        self.mesh_canvas = FigureCanvasTkAgg(self.mesh_fig, master=mshf)
+        self.mesh_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
         self._div_vline = None
 
@@ -618,7 +628,7 @@ class BeamGUI:
     def _sim_done(self):
         self.progress.stop(); self.run_btn.config(state="normal"); self.scan_btn.config(state="normal")
         self.status_var.set("Done")
-        self._update_trajectory_plot(); self._update_divergence_plot()
+        self._update_trajectory_plot(); self._update_mesh_plot(); self._update_divergence_plot()
         self._update_field_plot(); self._update_convergence_plot(); self._update_energy_plot()
         self._setup_slider(); self._on_slider(None)
 
@@ -714,6 +724,12 @@ class BeamGUI:
             self.traj_image = img
         else:
             self.traj_image = None
+        mf = os.path.join(OUTPUT_DIR,"mesh.png")
+        if os.path.exists(mf):
+            img = Image.open(mf); img.load()
+            self.mesh_image = img
+        else:
+            self.mesh_image = None
         self.field_data = self._csv(os.path.join(OUTPUT_DIR,"field_along_axis.csv"))
         self.convergence_data = self._load_convergence()
         self.electrode_currents = self._csv(os.path.join(OUTPUT_DIR,"electrode_currents.csv"))
@@ -757,6 +773,11 @@ class BeamGUI:
         self.traj_ax.clear()
         if self.traj_image: self.traj_ax.imshow(np.array(self.traj_image), aspect="auto")
         self.traj_ax.axis("off"); self.traj_fig.tight_layout(pad=0.5); self.traj_canvas.draw()
+
+    def _update_mesh_plot(self):
+        self.mesh_ax.clear()
+        if self.mesh_image: self.mesh_ax.imshow(np.array(self.mesh_image), aspect="auto")
+        self.mesh_ax.axis("off"); self.mesh_fig.tight_layout(pad=0.5); self.mesh_canvas.draw()
 
     def _update_divergence_plot(self):
         self.div_fig.clear(); self.div_ax = self.div_fig.add_subplot(111)
@@ -1051,7 +1072,7 @@ class BeamGUI:
         self.root.after(0, self._scan_done)
 
     def _update_all_scan(self):
-        self._update_trajectory_plot(); self._update_divergence_plot()
+        self._update_trajectory_plot(); self._update_mesh_plot(); self._update_divergence_plot()
         self._update_field_plot(); self._update_convergence_plot(); self._update_energy_plot()
         self._setup_slider(); self._on_slider(None)
         self._redraw_scan(); self._capture_frame()
@@ -1253,7 +1274,7 @@ class BeamGUI:
         self.root.after(0, lambda: self._match_done(best_v, best_div_deg, iteration))
 
     def _update_all_scan_plots(self):
-        self._update_trajectory_plot(); self._update_divergence_plot()
+        self._update_trajectory_plot(); self._update_mesh_plot(); self._update_divergence_plot()
         self._update_field_plot(); self._update_convergence_plot(); self._update_energy_plot()
         self._setup_slider(); self._on_slider(None)
 
@@ -1464,6 +1485,14 @@ class BeamGUI:
                 ax2.axis("off"); ax2.set_title("Particle Trajectories (Axisymmetric)")
                 fig2.tight_layout(); pdf.savefig(fig2); fig2.clear()
 
+                # Page 2b: Mesh / geometry plot
+                if self.mesh_image:
+                    fig2b = Figure(figsize=(8.5, 5), dpi=150)
+                    ax2b = fig2b.add_subplot(111)
+                    ax2b.imshow(np.array(self.mesh_image), aspect="auto")
+                    ax2b.axis("off"); ax2b.set_title("Computational Mesh & Geometry")
+                    fig2b.tight_layout(); pdf.savefig(fig2b); fig2b.clear()
+
                 # Page 3: Phase space + beam profile
                 figs_to_save = [
                     (self.emit_fig, "Phase Space"),
@@ -1544,13 +1573,14 @@ class BeamGUI:
         folder = filedialog.askdirectory(title="Save plots to")
         if not folder: return
         try:
-            for fig,name in [(self.traj_fig,"trajectory"),(self.emit_fig,"phase_space"),
+            for fig,name in [(self.traj_fig,"trajectory"),(self.mesh_fig,"mesh"),
+                              (self.emit_fig,"phase_space"),
                               (self.prof_fig,"beam_profile"),
                               (self.div_fig,"envelope"),(self.scan_fig,"perveance_scan"),
                               (self.field_fig,"field_diagnostics"),(self.conv_fig,"convergence"),
                               (self.ek_fig,"energy_distribution")]:
                 fig.savefig(os.path.join(folder,f"{name}.png"), dpi=150, bbox_inches="tight")
-            self.save_status.set(f"Saved 8 plots to {folder}")
+            self.save_status.set(f"Saved 9 plots to {folder}")
         except Exception as e: messagebox.showerror("Error",str(e))
 
     def _save_gif(self):

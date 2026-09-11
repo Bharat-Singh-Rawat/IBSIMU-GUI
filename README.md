@@ -36,7 +36,8 @@ Interactive GUI for axisymmetric ion/electron beam extraction simulation using [
 - Properly handled in particle trajectory integration
 
 ### Diagnostics & Plots
-- **Particle trajectories** - axisymmetric geometry plot with trajectory density
+- **Particle trajectories** - axisymmetric geometry plot with trajectory density, bold high-contrast axis labels
+- **Mesh & geometry preview** - computational grid overlaid on electrode solids, generated before the solve so it renders instantly; grid line density is auto-decimated so it stays legible regardless of how fine the solver grid is
 - **Phase-space plot** (y, y') with density-based coloring (KDE) and colorbar, RMS emittance ellipse overlay, adjustable via slider
 - **Beam profile** - spatial histogram of particle positions at any axial location with RMS radius markers
 - **Beam envelope, divergence & transmission** profile along the beam path
@@ -71,12 +72,12 @@ Interactive GUI for axisymmetric ion/electron beam extraction simulation using [
 - Results stored for inclusion in PDF reports
 
 ### Export & Reporting
-- **Save All Plots (PNG)** - 8 high-resolution plots (trajectory, phase space, beam profile, envelope, perveance scan, field diagnostics, convergence, energy distribution)
+- **Save All Plots (PNG)** - 9 high-resolution plots (trajectory, mesh/geometry, phase space, beam profile, envelope, perveance scan, field diagnostics, convergence, energy distribution)
 - **Save Scan GIF** - animated GIF of beam evolution during perveance scan
 - **PDF Report Generator** - multi-page report containing:
   - Simulation configuration summary (beam parameters, electrode table)
   - Key results at electrode exit (divergence, RMS radius, current, transmission)
-  - All diagnostic plots (trajectory, phase space, beam profile, envelope, field, convergence, energy)
+  - All diagnostic plots (trajectory, mesh/geometry, phase space, beam profile, envelope, field, convergence, energy)
   - Perveance scan results (if available)
   - Optimizer results table with all evaluated parameter combinations (if available)
 
@@ -102,6 +103,16 @@ cd ibsimu
 make -j$(nproc)
 make install
 ```
+
+> **Note:** the mesh/geometry preview and the bold plot labels rely on two
+> small additions to IBSimu that aren't in the upstream release: a
+> `set_font_weight()` passthrough on `Ruler`/`Frame`/`Plotter` (for bold
+> tics and axis labels), and a `stride` argument on
+> `GeomPlot::set_mesh()`/`MeshGraph` (to keep dense computational meshes
+> legible instead of rendering as a solid block). If you build against a
+> fresh upstream IBSimu checkout, `beam_sim.cpp` won't compile until these
+> are added to `ruler.hpp/.cpp`, `frame.hpp/.cpp`, `plotter.hpp/.cpp`, and
+> `meshgraph.hpp/.cpp`/`geomplot.hpp/.cpp`.
 
 ## Building
 
@@ -132,6 +143,7 @@ python3 beam_gui.py
    - **Convergence** - iteration convergence history
    - **Perveance Scan** - sweep voltage/current for optimization
    - **Energy Dist.** - particle energy histogram at exit
+   - **Mesh** - computational grid and electrode geometry preview
 7. Use **Find Matched Beam** for automatic voltage optimization
 8. Use **Run Optimizer** for multi-parameter sweeps
 9. Click **Generate Report (PDF)** to export a complete summary
@@ -165,7 +177,7 @@ chmod +x build_package.sh
 
 1. GUI writes config file with all parameters (geometry, beam, solver, B-field)
 2. `beam_sim` reads config, builds geometry, runs Vlasov iteration
-3. Outputs: trajectory PNG, emittance/phase-space CSV, field diagnostics CSV, convergence history, electrode currents, energy distribution
+3. Outputs: mesh/geometry PNG (written right after the grid is built, before solving), trajectory PNG, emittance/phase-space CSV, field diagnostics CSV, convergence history, electrode currents, energy distribution
 4. GUI loads and displays results interactively
 
 ## License

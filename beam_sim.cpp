@@ -273,6 +273,21 @@ int main( int argc, char **argv )
     geom.set_boundary( 4, Bound(BOUND_NEUMANN, 0.0) );
     geom.build_mesh();
 
+    // ==================================================================
+    // OUTPUT 0 : mesh / geometry plot
+    // ==================================================================
+    {
+        GeomPlotter mplotter( geom );
+        mplotter.set_size( 1200, 600 );
+        mplotter.set_font_size( 20 );
+        mplotter.set_font_weight( CAIRO_FONT_WEIGHT_BOLD );
+        // Keep mesh lines legible: draw at most ~40 lines along x,
+        // regardless of how fine the solver grid actually is.
+        int mesh_stride = max( 1, cfg.grid_nx / 40 );
+        mplotter.set_mesh( true, mesh_stride );
+        mplotter.plot_png( outdir + "/mesh.png" );
+    }
+
     // ---- Solver (selectable) ----
     bool is_electron = ( cfg.beam_charge < 0 );
     EpotSolver *solver_ptr = NULL;
@@ -391,7 +406,8 @@ int main( int argc, char **argv )
         pdb.build_trajectory_density_field( tdens );
         GeomPlotter gplotter( geom );
         gplotter.set_size( 1200, 600 );
-        gplotter.set_font_size( 16 );
+        gplotter.set_font_size( 22 );
+        gplotter.set_font_weight( CAIRO_FONT_WEIGHT_BOLD );
         gplotter.set_epot( &epot );
         vector<double> eqlines;
         double vmid = (v_min+v_max)*0.5, vspan = max(v_max-v_min, 1.0);
